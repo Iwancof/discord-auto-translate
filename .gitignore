@@ -9,3 +9,5 @@ sessions/
 *.session
 *.jsonl
 .agents/
+.discord-bot-token
+.claude-token
