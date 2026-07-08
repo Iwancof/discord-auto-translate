@@ -11,6 +11,7 @@ import {
   TranslationCache
 } from './delivery.js';
 import { detectLanguage } from './detect.js';
+import { resolveDispatch } from './dispatch.js';
 import { extractTranslatable, shouldTranslate } from './filter.js';
 import { translate, type ChatContextItem } from './translator.js';
 
@@ -77,20 +78,26 @@ async function main(): Promise<void> {
 
       const sourceLang = detectLanguage(translatable);
 
-      if (deliveryMode === 'log_only') {
-        const targetLang: UserLang = sourceLang === 'en' ? 'ja' : 'en';
-        const translation = await translate(translatable, targetLang, context);
-        if (translation) {
-          new LogOnlyDelivery().deliver(message, translation, targetLang);
+      const action = resolveDispatch(sourceLang, deliveryMode);
+      switch (action.type) {
+        case 'log': {
+          const translation = await translate(translatable, action.targetLang, context);
+          if (translation) {
+            new LogOnlyDelivery().deliver(message, translation, action.targetLang);
+          }
+          break;
         }
-      } else if (sourceLang !== 'en') {
-        await message.channel.sendTyping();
-        const translation = await translate(translatable, 'en', context);
-        if (translation) {
-          await new AutoReplyDelivery().deliver(message, translation, 'en');
+        case 'auto-reply': {
+          await message.channel.sendTyping();
+          const translation = await translate(translatable, action.targetLang, context);
+          if (translation) {
+            await new AutoReplyDelivery().deliver(message, translation, action.targetLang);
+          }
+          break;
         }
-      } else {
-        await postTranslateButton(message);
+        case 'button-only':
+          await postTranslateButton(message);
+          break;
       }
     } catch (error) {
       console.error(`Translation failed for message ${message.id}: ${formatError(error)}`);

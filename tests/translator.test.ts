@@ -75,4 +75,33 @@ describe('translate', () => {
     await expect(translate('Got it', 'ja', [])).resolves.toBe('了解です');
     expect(createMock).toHaveBeenCalledTimes(2);
   });
+
+  it('throws after two consecutive failures', async () => {
+    createMock
+      .mockRejectedValueOnce(new Error('first failure'))
+      .mockRejectedValueOnce(new Error('second failure'));
+
+    await expect(translate('Hello', 'ja', [])).rejects.toThrow('second failure');
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns null for empty text response', async () => {
+    createMock.mockResolvedValueOnce({
+      content: [{ type: 'text', text: '' }]
+    });
+
+    await expect(translate('test', 'ja', [])).resolves.toBeNull();
+  });
+
+  it('uses default model when ANTHROPIC_MODEL is unset', async () => {
+    delete process.env.ANTHROPIC_MODEL;
+    createMock.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'translated' }]
+    });
+
+    await translate('Hello', 'ja', []);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'claude-haiku-4-5' })
+    );
+  });
 });

@@ -1,0 +1,9 @@
+[Unit]
+Description=Auto-translate bot update check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/iwancof/WorkSpace/Discord/auto-translate
+ExecStart=/home/iwancof/WorkSpace/Discord/auto-translate/deploy/update.sh

@@ -1,5 +1,7 @@
 # Discord Translator Bot
 
+[![CI](https://github.com/Iwancof/discord-auto-translate/actions/workflows/ci.yml/badge.svg)](https://github.com/Iwancof/discord-auto-translate/actions/workflows/ci.yml)
+
 Asymmetric Discord translation bot powered by Claude (Anthropic API).
 
 - **Non-English messages** (Japanese) are automatically replied with an English translation.
@@ -70,4 +72,24 @@ mkdir -p ~/.config/systemd/user
 cp deploy/auto-translate.service ~/.config/systemd/user/
 systemctl --user enable --now auto-translate.service
 loginctl enable-linger "$USER"
+```
+
+## CI/CD
+
+**CI** runs on every push to `main` and on pull requests via GitHub Actions (`.github/workflows/ci.yml`): checkout → install → build → test.
+
+**CD** uses a systemd timer that checks for updates every 10 minutes:
+
+```sh
+cp deploy/auto-translate-update.service deploy/auto-translate-update.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now auto-translate-update.timer
+```
+
+The update script (`deploy/update.sh`) fetches `origin/main`, and if the local HEAD differs, pulls with `--ff-only`, runs `npm ci && npm run build && npm test`, then restarts the service. If tests fail, the service is not restarted.
+
+Manual deploy:
+
+```sh
+bash deploy/update.sh
 ```

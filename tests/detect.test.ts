@@ -25,4 +25,20 @@ describe('detectLanguage', () => {
   it('defaults to English when no CJK/Hangul ranges are present', () => {
     expect(detectLanguage('Please translate this')).toBe('en');
   });
+
+  it('returns en for empty string', () => {
+    expect(detectLanguage('')).toBe('en');
+  });
+
+  it('returns en for numbers only', () => {
+    expect(detectLanguage('1234567890')).toBe('en');
+  });
+
+  it('detects ko for Hangul+CJK mix without kana', () => {
+    expect(detectLanguage('한국語')).toBe('ko');
+  });
+
+  it('prioritizes ja when kana and hangul are both present', () => {
+    expect(detectLanguage('こんにちは 안녕하세요')).toBe('ja');
+  });
 });

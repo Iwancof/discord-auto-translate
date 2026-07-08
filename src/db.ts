@@ -4,15 +4,21 @@ import { dirname, resolve } from 'node:path';
 
 export type UserLang = 'en' | 'ja' | 'ko';
 
-const dbPath = resolve(process.cwd(), 'data', 'bot.db');
-
 let db: Database.Database | null = null;
+
+export function _resetDb(): void {
+  if (db) {
+    db.close();
+    db = null;
+  }
+}
 
 function getDb(): Database.Database {
   if (db) {
     return db;
   }
 
+  const dbPath = process.env.BOT_DB_PATH ?? resolve(process.cwd(), 'data', 'bot.db');
   mkdirSync(dirname(dbPath), { recursive: true });
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
