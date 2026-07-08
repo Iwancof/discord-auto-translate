@@ -37,7 +37,8 @@ Each server has an **official language** (auto-detected or manually set). Messag
 | `/glossary list` | List glossary entries | Everyone |
 | `/summarize [count] [lang]` | Summarize recent conversation | Everyone |
 | `/usage` | Show API usage statistics | Everyone |
-| Right-click → **Translate** | Context menu translation | Everyone |
+| Right-click → **Translate** | Context menu translation (ephemeral, your `/language`) | Everyone |
+| Right-click → **Translate to...** | Pick a language and show privately or post to the channel | Everyone |
 
 Slash commands are registered automatically when the bot starts.
 

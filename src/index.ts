@@ -1,6 +1,7 @@
 import { config as loadEnv } from 'dotenv';
 loadEnv({ override: true });
 import {
+  ActionRowBuilder,
   ApplicationCommandType,
   Client,
   ContextMenuCommandBuilder,
@@ -8,10 +9,12 @@ import {
   GatewayIntentBits,
   MessageFlags,
   Partials,
+  StringSelectMenuBuilder,
   Team,
   User,
   type ButtonInteraction,
-  type MessageContextMenuCommandInteraction
+  type MessageContextMenuCommandInteraction,
+  type StringSelectMenuInteraction
 } from 'discord.js';
 import { executeLanguageCommand, formatLang, languageCommand } from './commands/language.js';
 import { executeModeCommand, modeCommand } from './commands/mode.js';
@@ -41,6 +44,11 @@ import {
 import { detectLanguage } from './detect.js';
 import { resolveDispatch } from './dispatch.js';
 import { extractTranslatable, shouldTranslate } from './filter.js';
+import {
+  buildTranslateSelectOptions,
+  parseTranslateSelectValue,
+  TRANSLATE_SELECT_PREFIX
+} from './translateMenu.js';
 import { translate, type ChatContextItem } from './translator.js';
 
 const CONTEXT_LIMIT = 8;
@@ -50,6 +58,10 @@ const companionTracker = new CompanionTracker();
 
 const translateContextMenu = new ContextMenuCommandBuilder()
   .setName('Translate')
+  .setType(ApplicationCommandType.Message);
+
+const translateToContextMenu = new ContextMenuCommandBuilder()
+  .setName('Translate to...')
   .setType(ApplicationCommandType.Message);
 
 async function main(): Promise<void> {
@@ -80,7 +92,8 @@ async function main(): Promise<void> {
       summarizeCommand.toJSON(),
       officialLangCommand.toJSON(),
       transCommand.toJSON(),
-      translateContextMenu.toJSON()
+      translateContextMenu.toJSON(),
+      translateToContextMenu.toJSON()
     ]);
   });
 
@@ -131,6 +144,16 @@ async function main(): Promise<void> {
 
     if (interaction.isMessageContextMenuCommand() && interaction.commandName === 'Translate') {
       await handleTranslateContextMenu(interaction, client);
+      return;
+    }
+
+    if (interaction.isMessageContextMenuCommand() && interaction.commandName === 'Translate to...') {
+      await handleTranslateToContextMenu(interaction);
+      return;
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith(TRANSLATE_SELECT_PREFIX)) {
+      await handleTranslateSelect(interaction, client);
       return;
     }
 
@@ -257,6 +280,52 @@ async function main(): Promise<void> {
   await client.login(token);
 }
 
+type ManualTranslateResult =
+  | { kind: 'ok'; text: string }
+  | { kind: 'nothing' }
+  | { kind: 'same'; lang: UserLang }
+  | { kind: 'empty' };
+
+async function translateMessageTo(
+  messageId: string,
+  content: string,
+  targetLang: UserLang,
+  guildId: string | null,
+  channelId: string
+): Promise<ManualTranslateResult> {
+  const translatable = extractTranslatable(content);
+  if (!translatable) return { kind: 'nothing' };
+
+  const sourceLang = detectLanguage(translatable);
+  if (sourceLang === targetLang) return { kind: 'same', lang: targetLang };
+
+  const cached = translationCache.get(messageId, targetLang);
+  if (cached) return { kind: 'ok', text: cached };
+
+  const glossary = guildId ? getGlossaryEntries(guildId) : [];
+  const context = getContext(channelId);
+  const translation = await translate(translatable, targetLang, context, { allowSkip: false, glossary });
+  if (!translation) return { kind: 'empty' };
+
+  translationCache.set(messageId, targetLang, translation);
+  return { kind: 'ok', text: translation };
+}
+
+function describeManualResult(result: ManualTranslateResult, hintLanguageCommand: boolean): string {
+  switch (result.kind) {
+    case 'ok':
+      return result.text;
+    case 'nothing':
+      return '(Nothing to translate)';
+    case 'same':
+      return hintLanguageCommand
+        ? `This message is already in your language (${formatLang(result.lang)}). Use \`/language set\` to pick a different one.`
+        : `This message is already in ${formatLang(result.lang)}.`;
+    case 'empty':
+      return '(Empty translation — try again)';
+  }
+}
+
 async function translateForUser(
   messageId: string,
   content: string,
@@ -264,25 +333,8 @@ async function translateForUser(
   guildId: string | null,
   channelId: string
 ): Promise<string> {
-  const translatable = extractTranslatable(content);
-  if (!translatable) return '(Nothing to translate)';
-
-  const sourceLang = detectLanguage(translatable);
-  if (userLang === sourceLang) {
-    return `This message is already in your language (${formatLang(userLang)}). Use \`/language set\` to pick a different one.`;
-  }
-
-  const cached = translationCache.get(messageId, userLang);
-  if (cached) return cached;
-
-  const glossary = guildId ? getGlossaryEntries(guildId) : [];
-  const context = getContext(channelId);
-  const translation = await translate(translatable, userLang, context, { allowSkip: false, glossary });
-  if (translation) {
-    translationCache.set(messageId, userLang, translation);
-    return translation;
-  }
-  return '(Empty translation — try again)';
+  const result = await translateMessageTo(messageId, content, userLang, guildId, channelId);
+  return describeManualResult(result, true);
 }
 
 async function handleTranslateButton(interaction: ButtonInteraction, client: Client): Promise<void> {
@@ -330,6 +382,78 @@ async function handleTranslateContextMenu(
   } catch (error) {
     console.error(`Context menu translation failed: ${formatError(error)}`);
     await interaction.editReply({ content: `Translation failed: ${formatError(error)}` });
+  }
+}
+
+async function handleTranslateToContextMenu(
+  interaction: MessageContextMenuCommandInteraction
+): Promise<void> {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`${TRANSLATE_SELECT_PREFIX}${interaction.targetMessage.id}`)
+    .setPlaceholder('Language and where to show it')
+    .addOptions(buildTranslateSelectOptions());
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+  await interaction.reply({
+    content: 'Translate this message:',
+    components: [row],
+    flags: MessageFlags.Ephemeral
+  });
+}
+
+async function handleTranslateSelect(
+  interaction: StringSelectMenuInteraction,
+  client: Client
+): Promise<void> {
+  const messageId = interaction.customId.slice(TRANSLATE_SELECT_PREFIX.length);
+  const choice = parseTranslateSelectValue(interaction.values[0] ?? '');
+  if (!choice) {
+    await interaction.update({ content: 'Invalid selection.', components: [] });
+    return;
+  }
+
+  await interaction.deferUpdate();
+
+  try {
+    const channel = interaction.channel;
+    if (!channel || !('messages' in channel)) {
+      await interaction.editReply({ content: 'Could not access the channel.', components: [] });
+      return;
+    }
+
+    const originalMsg = await channel.messages.fetch(messageId);
+    const result = await translateMessageTo(
+      messageId,
+      originalMsg.content,
+      choice.lang,
+      interaction.guildId,
+      interaction.channelId
+    );
+
+    if (result.kind !== 'ok') {
+      await interaction.editReply({ content: describeManualResult(result, false), components: [] });
+      return;
+    }
+
+    if (choice.visibility === 'public') {
+      await originalMsg.reply({
+        content: `${result.text}\n-# \u{1F310} ${formatLang(choice.lang)} · requested by <@${interaction.user.id}>`,
+        allowedMentions: { repliedUser: false, parse: [] },
+        flags: [MessageFlags.SuppressNotifications]
+      });
+      await interaction.editReply({
+        content: `Posted the ${formatLang(choice.lang)} translation to the channel.`,
+        components: []
+      });
+    } else {
+      await interaction.editReply({ content: result.text, components: [] });
+    }
+    await maybeSendBudgetAlert(client);
+  } catch (error) {
+    console.error(`Translate select failed: ${formatError(error)}`);
+    await interaction.editReply({
+      content: `Translation failed: ${formatError(error)}`,
+      components: []
+    });
   }
 }
 
