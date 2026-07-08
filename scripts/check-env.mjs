@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 const env = { ...process.env, ...readDotEnv() };
-const missing = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'OPENAI_API_KEY'].filter(
+const missing = ['DISCORD_TOKEN', 'ANTHROPIC_API_KEY'].filter(
   (name) => !env[name]?.trim()
 );
 
@@ -10,9 +10,9 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-const deliveryMode = env.DELIVERY_MODE?.trim() || 'log_only';
-if (deliveryMode !== 'log_only') {
-  console.error(`Unsupported DELIVERY_MODE "${deliveryMode}". Currently supported: log_only.`);
+const deliveryMode = env.DELIVERY_MODE?.trim() || 'auto';
+if (!['auto', 'log_only'].includes(deliveryMode)) {
+  console.error(`Unsupported DELIVERY_MODE "${deliveryMode}". Supported: auto, log_only.`);
   process.exit(1);
 }
 

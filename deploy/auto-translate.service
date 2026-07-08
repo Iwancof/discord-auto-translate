@@ -1,0 +1,15 @@
+[Unit]
+Description=Discord Translator Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/iwancof/WorkSpace/Discord/auto-translate
+ExecStart=/usr/bin/node dist/src/index.js
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/home/iwancof/WorkSpace/Discord/auto-translate/.env
+
+[Install]
+WantedBy=default.target

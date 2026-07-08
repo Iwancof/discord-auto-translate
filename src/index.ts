@@ -1,19 +1,29 @@
 import 'dotenv/config';
-import { Client, Events, GatewayIntentBits } from 'discord.js';
-import { executeLanguageCommand } from './commands/language.js';
-import type { UserLang } from './db.js';
-import { LogOnlyDelivery, type DeliveryStrategy } from './delivery.js';
+import { Client, Events, GatewayIntentBits, MessageFlags, type ButtonInteraction } from 'discord.js';
+import { executeLanguageCommand, languageCommand } from './commands/language.js';
+import { getUserLang, type UserLang } from './db.js';
+import {
+  AutoReplyDelivery,
+  LogOnlyDelivery,
+  postTranslateButton,
+  TranslationCache
+} from './delivery.js';
 import { detectLanguage } from './detect.js';
 import { extractTranslatable, shouldTranslate } from './filter.js';
 import { translate, type ChatContextItem } from './translator.js';
 
 const CONTEXT_LIMIT = 8;
 const contextByChannel = new Map<string, ChatContextItem[]>();
+const translationCache = new TranslationCache();
 
 async function main(): Promise<void> {
-  const env = validateEnv();
+  const token = process.env.DISCORD_TOKEN?.trim();
+  if (!token) {
+    throw new Error('Missing required environment variable: DISCORD_TOKEN');
+  }
 
-  const delivery = createDeliveryStrategy();
+  const deliveryMode = process.env.DELIVERY_MODE?.trim() || 'auto';
+
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -22,24 +32,28 @@ async function main(): Promise<void> {
     ]
   });
 
-  client.once(Events.ClientReady, (readyClient) => {
+  client.once(Events.ClientReady, async (readyClient) => {
     console.log(`Logged in as ${readyClient.user.tag}.`);
+    await readyClient.application.commands.set([languageCommand.toJSON()]);
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
-    if (!interaction.isChatInputCommand() || interaction.commandName !== 'language') {
+    if (interaction.isChatInputCommand() && interaction.commandName === 'language') {
+      try {
+        await executeLanguageCommand(interaction);
+      } catch (error) {
+        const content = `Failed to handle /language: ${formatError(error)}`;
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp({ content, ephemeral: true });
+        } else {
+          await interaction.reply({ content, ephemeral: true });
+        }
+      }
       return;
     }
 
-    try {
-      await executeLanguageCommand(interaction);
-    } catch (error) {
-      const content = `Failed to handle /language: ${formatError(error)}`;
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp({ content, ephemeral: true });
-      } else {
-        await interaction.reply({ content, ephemeral: true });
-      }
+    if (interaction.isButton() && interaction.customId.startsWith('tr:')) {
+      await handleTranslateButton(interaction);
     }
   });
 
@@ -60,11 +74,21 @@ async function main(): Promise<void> {
       }
 
       const sourceLang = detectLanguage(translatable);
-      const targetLang: UserLang = sourceLang === 'ja' ? 'en' : 'ja';
-      const translation = await translate(translatable, targetLang, context);
 
-      if (translation) {
-        await delivery.deliver(message, translation, targetLang);
+      if (deliveryMode === 'log_only') {
+        const targetLang: UserLang = sourceLang === 'ja' ? 'en' : 'ja';
+        const translation = await translate(translatable, targetLang, context);
+        if (translation) {
+          new LogOnlyDelivery().deliver(message, translation, targetLang);
+        }
+      } else if (sourceLang === 'ja') {
+        await message.channel.sendTyping();
+        const translation = await translate(translatable, 'en', context);
+        if (translation) {
+          await new AutoReplyDelivery().deliver(message, translation, 'en');
+        }
+      } else {
+        await postTranslateButton(message);
       }
     } catch (error) {
       console.error(`Translation failed for message ${message.id}: ${formatError(error)}`);
@@ -76,32 +100,55 @@ async function main(): Promise<void> {
     }
   });
 
-  await client.login(env.DISCORD_TOKEN);
+  await client.login(token);
 }
 
-function validateEnv(): { DISCORD_TOKEN: string; DISCORD_CLIENT_ID: string; OPENAI_API_KEY: string } {
-  const missing = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'OPENAI_API_KEY'].filter(
-    (name) => !process.env[name]?.trim()
-  );
+async function handleTranslateButton(interaction: ButtonInteraction): Promise<void> {
+  const messageId = interaction.customId.slice(3);
+  const userLang = getUserLang(interaction.user.id);
 
-  if (missing.length > 0) {
-    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  if (userLang === 'en') {
+    await interaction.reply({
+      content: 'Set your language first with `/language set` to see translations.',
+      flags: MessageFlags.Ephemeral
+    });
+    return;
   }
 
-  return {
-    DISCORD_TOKEN: process.env.DISCORD_TOKEN as string,
-    DISCORD_CLIENT_ID: process.env.DISCORD_CLIENT_ID as string,
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY as string
-  };
-}
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-function createDeliveryStrategy(): DeliveryStrategy {
-  const mode = process.env.DELIVERY_MODE?.trim() || 'log_only';
-  if (mode === 'log_only') {
-    return new LogOnlyDelivery();
+  try {
+    const cached = translationCache.get(messageId, userLang);
+    if (cached) {
+      await interaction.editReply({ content: cached });
+      return;
+    }
+
+    const channel = interaction.channel;
+    if (!channel) {
+      await interaction.editReply({ content: 'Could not access the channel.' });
+      return;
+    }
+
+    const originalMsg = await channel.messages.fetch(messageId);
+    const translatable = extractTranslatable(originalMsg.content);
+    if (!translatable) {
+      await interaction.editReply({ content: '(Nothing to translate)' });
+      return;
+    }
+
+    const context = getContext(interaction.channelId);
+    const translation = await translate(translatable, userLang, context);
+    if (translation) {
+      translationCache.set(messageId, userLang, translation);
+      await interaction.editReply({ content: translation });
+    } else {
+      await interaction.editReply({ content: '(Translation skipped)' });
+    }
+  } catch (error) {
+    console.error(`Button translation failed: ${formatError(error)}`);
+    await interaction.editReply({ content: `Translation failed: ${formatError(error)}` });
   }
-
-  throw new Error(`Unsupported DELIVERY_MODE "${mode}". Currently supported: log_only.`);
 }
 
 function getContext(channelId: string): readonly ChatContextItem[] {

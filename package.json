@@ -9,14 +9,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "node scripts/check-env.mjs && tsx src/index.ts",
-    "register:commands": "tsx scripts/register-commands.ts",
-    "test": "vitest run"
+"test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
     "better-sqlite3": "^12.11.1",
     "discord.js": "^14.17.3",
-    "dotenv": "^16.4.7",
-    "openai": "^4.85.4"
+    "dotenv": "^16.4.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

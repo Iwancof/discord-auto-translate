@@ -1,6 +1,9 @@
 # Discord Translator Bot
 
-Display-mode-independent core for a Discord translation bot. The current delivery mode is development-only `log_only`; public replies are intentionally not implemented.
+Asymmetric Discord translation bot powered by Claude (Anthropic API).
+
+- **Non-English messages** (Japanese) are automatically replied with an English translation.
+- **English messages** get a "Translate" button; pressing it shows an ephemeral translation in the user's preferred language.
 
 ## Discord Setup
 
@@ -8,12 +11,12 @@ Display-mode-independent core for a Discord translation bot. The current deliver
 2. Add a bot user.
 3. In **Bot > Privileged Gateway Intents**, enable **MESSAGE CONTENT INTENT**.
 4. Invite the bot with scopes `bot` and `applications.commands`.
-5. Grant these bot permissions for development: **View Channels**, **Send Messages**, **Read Message History**.
+5. Grant these bot permissions: **View Channels**, **Send Messages**, **Read Message History**.
 
 Invite URL template:
 
 ```text
-https://discord.com/oauth2/authorize?client_id=DISCORD_CLIENT_ID&scope=bot%20applications.commands&permissions=68608
+https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot%20applications.commands&permissions=68608
 ```
 
 ## Configuration
@@ -24,12 +27,11 @@ cp .env.example .env
 
 Set:
 
-- `DISCORD_TOKEN`
-- `DISCORD_CLIENT_ID`
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL` defaults to `gpt-4.1-mini`
-- `GUILD_ID` optional; use it for fast development command registration
-- `DELIVERY_MODE` defaults to `log_only`; no other mode is currently implemented
+- `DISCORD_TOKEN` — bot token from Developer Portal
+- `ANTHROPIC_API_KEY` — Anthropic API key
+- `ANTHROPIC_MODEL` — defaults to `claude-haiku-4-5`
+- `GUILD_ID` — optional; not currently used
+- `DELIVERY_MODE` — `auto` (default, full translation) or `log_only` (development, stdout only)
 
 ## Commands
 
@@ -37,12 +39,6 @@ Install dependencies:
 
 ```sh
 npm install
-```
-
-Register slash commands:
-
-```sh
-npm run register:commands
 ```
 
 Run in development:
@@ -63,6 +59,15 @@ npm test
 - `/language set <English|Japanese>` saves the user's preferred language.
 - `/language show` shows the saved language. Unset users default to English.
 
-## Current Delivery
+Slash commands are registered automatically when the bot starts.
 
-`LogOnlyDelivery` writes translations to stdout. Ephemeral context menu or button-based delivery should be added behind `DeliveryStrategy` after the display decision is made.
+## Deployment (systemd user service)
+
+Copy `deploy/auto-translate.service` to your systemd user directory and enable it:
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp deploy/auto-translate.service ~/.config/systemd/user/
+systemctl --user enable --now auto-translate.service
+loginctl enable-linger "$USER"
+```

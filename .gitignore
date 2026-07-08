@@ -8,3 +8,4 @@ logs/
 sessions/
 *.session
 *.jsonl
+.agents/

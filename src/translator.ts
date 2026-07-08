@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import type { UserLang } from './db.js';
 
 export interface ChatContextItem {
@@ -6,18 +6,24 @@ export interface ChatContextItem {
   content: string;
 }
 
-export type TranslationMessage =
-  | { role: 'system'; content: string }
-  | { role: 'user'; content: string };
-
-const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
+const DEFAULT_MODEL = 'claude-haiku-4-5';
 const SKIP_TOKEN = 'SKIP';
 
-export function buildTranslationMessages(
+export function buildSystemPrompt(targetLang: UserLang): string {
+  const languageName = targetLang === 'ja' ? 'Japanese' : 'English';
+  return (
+    'You are a fast Discord chat translator. Translate naturally for chat readers. ' +
+    'Use recent context when it helps. Preserve tone, mentions, emoji, and line breaks. ' +
+    `Output only the ${languageName} translation. ` +
+    `If the target reader does not need a translation because the content is slang, an acknowledgement, emoji-only, code-only, proper nouns only, or otherwise language-independent, output exactly ${SKIP_TOKEN} and nothing else.`
+  );
+}
+
+export function buildUserContent(
   text: string,
   targetLang: UserLang,
   context: readonly ChatContextItem[]
-): TranslationMessage[] {
+): string {
   const languageName = targetLang === 'ja' ? 'Japanese' : 'English';
   const recentContext = context
     .slice(-8)
@@ -25,25 +31,12 @@ export function buildTranslationMessages(
     .join('\n');
 
   return [
-    {
-      role: 'system',
-      content:
-        'You are a fast Discord chat translator. Translate naturally for chat readers. ' +
-        'Use recent context when it helps. Preserve tone, mentions, emoji, and line breaks. ' +
-        `Output only the ${languageName} translation. ` +
-        `If the target reader does not need a translation because the content is slang, an acknowledgement, emoji-only, code-only, proper nouns only, or otherwise language-independent, output exactly ${SKIP_TOKEN} and nothing else.`
-    },
-    {
-      role: 'user',
-      content: [
-        `Target language: ${languageName}`,
-        'Recent context (oldest to newest, up to 8):',
-        recentContext || '(none)',
-        'Target message:',
-        text
-      ].join('\n')
-    }
-  ];
+    `Target language: ${languageName}`,
+    'Recent context (oldest to newest, up to 8):',
+    recentContext || '(none)',
+    'Target message:',
+    text
+  ].join('\n');
 }
 
 export async function translate(
@@ -51,34 +44,23 @@ export async function translate(
   targetLang: UserLang,
   context: readonly ChatContextItem[]
 ): Promise<string | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is required to translate messages.');
-  }
-
-  const client = new OpenAI({
-    apiKey,
+  const client = new Anthropic({
     timeout: 10_000,
     maxRetries: 0
   });
 
-  const messages = buildTranslationMessages(text, targetLang, context);
   let lastError: unknown;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const completion = await client.chat.completions.create(
-        {
-          model: getOpenAIModel(),
-          messages,
-          temperature: 0.2
-        },
-        {
-          timeout: 10_000
-        }
-      );
+      const res = await client.messages.create({
+        model: process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL,
+        max_tokens: 1024,
+        system: buildSystemPrompt(targetLang),
+        messages: [{ role: 'user', content: buildUserContent(text, targetLang, context) }]
+      });
 
-      const output = completion.choices[0]?.message?.content?.trim();
+      const output = res.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
       if (!output || output === SKIP_TOKEN) {
         return null;
       }
@@ -90,8 +72,4 @@ export async function translate(
   }
 
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
-}
-
-function getOpenAIModel(): string {
-  return process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
 }
