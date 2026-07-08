@@ -3,8 +3,10 @@ import { config as loadEnv } from 'dotenv';
 loadEnv({ override: true });
 import { Client, Events, GatewayIntentBits, MessageFlags, type ButtonInteraction } from 'discord.js';
 import { executeLanguageCommand, formatLang, languageCommand } from './commands/language.js';
-import { getUserLang, type UserLang } from './db.js';
+import { executeModeCommand, modeCommand } from './commands/mode.js';
+import { getGuildMode, getUserLang, type UserLang } from './db.js';
 import {
+  AutoReplyDelivery,
   LogOnlyDelivery,
   postTranslateButton,
   TranslationCache
@@ -36,7 +38,7 @@ async function main(): Promise<void> {
 
   client.once(Events.ClientReady, async (readyClient) => {
     console.log(`Logged in as ${readyClient.user.tag}.`);
-    await readyClient.application.commands.set([languageCommand.toJSON()]);
+    await readyClient.application.commands.set([languageCommand.toJSON(), modeCommand.toJSON()]);
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -45,6 +47,20 @@ async function main(): Promise<void> {
         await executeLanguageCommand(interaction);
       } catch (error) {
         const content = `Failed to handle /language: ${formatError(error)}`;
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp({ content, ephemeral: true });
+        } else {
+          await interaction.reply({ content, ephemeral: true });
+        }
+      }
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'mode') {
+      try {
+        await executeModeCommand(interaction);
+      } catch (error) {
+        const content = `Failed to handle /mode: ${formatError(error)}`;
         if (interaction.replied || interaction.deferred) {
           await interaction.followUp({ content, ephemeral: true });
         } else {
@@ -77,12 +93,21 @@ async function main(): Promise<void> {
 
       const sourceLang = detectLanguage(translatable);
 
-      const action = resolveDispatch(sourceLang, deliveryMode);
+      const guildMode = message.guildId ? getGuildMode(message.guildId) : 'button';
+      const action = resolveDispatch(sourceLang, deliveryMode, guildMode);
       switch (action.type) {
         case 'log': {
           const translation = await translate(translatable, action.targetLang, context);
           if (translation) {
             new LogOnlyDelivery().deliver(message, translation, action.targetLang);
+          }
+          break;
+        }
+        case 'auto-reply': {
+          await message.channel.sendTyping();
+          const translation = await translate(translatable, action.targetLang, context);
+          if (translation) {
+            await new AutoReplyDelivery().deliver(message, translation, action.targetLang);
           }
           break;
         }

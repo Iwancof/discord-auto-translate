@@ -46,7 +46,33 @@ function getDb(): Database.Database {
     `);
   }
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS guild_settings (
+      guild_id TEXT PRIMARY KEY,
+      mode TEXT NOT NULL CHECK (mode IN ('auto', 'button'))
+    )
+  `);
+
   return db;
+}
+
+export type GuildMode = 'auto' | 'button';
+
+export function getGuildMode(guildId: string): GuildMode {
+  const row = getDb()
+    .prepare('SELECT mode FROM guild_settings WHERE guild_id = ?')
+    .get(guildId) as { mode: GuildMode } | undefined;
+  return row?.mode ?? 'button';
+}
+
+export function setGuildMode(guildId: string, mode: GuildMode): void {
+  getDb()
+    .prepare(
+      `INSERT INTO guild_settings (guild_id, mode)
+       VALUES (?, ?)
+       ON CONFLICT(guild_id) DO UPDATE SET mode = excluded.mode`
+    )
+    .run(guildId, mode);
 }
 
 export function getUserLang(userId: string): UserLang {

@@ -6,6 +6,11 @@ Discord translation bot powered by Claude (Anthropic API).
 
 All messages (English, Japanese, Korean) get a "Translate" button. Pressing it shows an ephemeral translation in the user's preferred language (set via `/language set`).
 
+Server admins can switch between two delivery modes with `/mode set`:
+
+- **button** (default) — All messages get a 🌐 button; translations are shown only to the user who clicks (ephemeral).
+- **auto** — Non-English messages get an automatic public English translation reply (with a 🌐 button); English messages get a button only.
+
 ## Discord Setup
 
 1. Create an application in the Discord Developer Portal.
@@ -57,8 +62,10 @@ npm test
 
 ## Slash Commands
 
-- `/language set <English|Japanese>` saves the user's preferred language.
+- `/language set <English|Japanese|Korean>` saves the user's preferred language.
 - `/language show` shows the saved language. Unset users default to English.
+- `/mode set <button|auto>` sets the server's delivery mode (requires **Manage Server** permission).
+- `/mode show` shows the current delivery mode.
 
 Slash commands are registered automatically when the bot starts.
 

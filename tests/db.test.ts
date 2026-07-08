@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getUserLang, setUserLang, _resetDb } from '../src/db.js';
+import { getGuildMode, getUserLang, setGuildMode, setUserLang, _resetDb } from '../src/db.js';
 
 let tempDir: string;
 
@@ -56,6 +56,50 @@ describe('CHECK constraint', () => {
     const raw = new Database(dbPath);
     expect(() =>
       raw.prepare("INSERT INTO user_prefs (user_id, lang) VALUES ('x', 'fr')").run()
+    ).toThrow();
+    raw.close();
+  });
+});
+
+describe('getGuildMode', () => {
+  it('returns button for unknown guild', () => {
+    expect(getGuildMode('unknown-guild-123')).toBe('button');
+  });
+});
+
+describe('setGuildMode / getGuildMode roundtrip', () => {
+  it('stores and retrieves auto', () => {
+    setGuildMode('guild-1', 'auto');
+    expect(getGuildMode('guild-1')).toBe('auto');
+  });
+
+  it('stores and retrieves button', () => {
+    setGuildMode('guild-2', 'button');
+    expect(getGuildMode('guild-2')).toBe('button');
+  });
+
+  it('overwrites previous value', () => {
+    setGuildMode('guild-3', 'auto');
+    expect(getGuildMode('guild-3')).toBe('auto');
+    setGuildMode('guild-3', 'button');
+    expect(getGuildMode('guild-3')).toBe('button');
+  });
+
+  it('different guilds have independent settings', () => {
+    setGuildMode('guild-a', 'auto');
+    setGuildMode('guild-b', 'button');
+    expect(getGuildMode('guild-a')).toBe('auto');
+    expect(getGuildMode('guild-b')).toBe('button');
+  });
+});
+
+describe('guild_settings CHECK constraint', () => {
+  it('rejects invalid mode values at the DB level', () => {
+    getGuildMode('seed');
+    const dbPath = process.env.BOT_DB_PATH!;
+    const raw = new Database(dbPath);
+    expect(() =>
+      raw.prepare("INSERT INTO guild_settings (guild_id, mode) VALUES ('x', 'invalid')").run()
     ).toThrow();
     raw.close();
   });
