@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+// この bot は自前の .env を正とする(シェルに他プロジェクトの DISCORD_TOKEN が居ても負けない)
+loadEnv({ override: true });
 import { Client, Events, GatewayIntentBits, MessageFlags, type ButtonInteraction } from 'discord.js';
 import { executeLanguageCommand, languageCommand } from './commands/language.js';
 import { getUserLang, type UserLang } from './db.js';
