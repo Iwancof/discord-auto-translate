@@ -4,12 +4,51 @@
 
 Discord translation bot powered by Claude (Anthropic API).
 
-All messages (English, Japanese, Korean) get a "Translate" button. Pressing it shows an ephemeral translation in the user's preferred language (set via `/language set`).
+Each server has an **official language** (auto-detected or manually set). Messages in the official language pass through silently; messages in other languages get a translate button or automatic translation depending on the delivery mode.
 
-Server admins can switch between two delivery modes with `/mode set`:
+## How it works
 
-- **button** (default) — All messages get a 🌐 button; translations are shown only to the user who clicks (ephemeral).
-- **auto** — Non-English messages get an automatic public English translation reply (with a 🌐 button); English messages get a button only.
+1. A message arrives in the server.
+2. The bot detects the message language (English / Japanese / Korean).
+3. Dispatch depends on the **delivery mode** and the server's **official language**:
+
+| Delivery mode | Message = official lang | Message ≠ official lang |
+|---|---|---|
+| **button** (default) | Nothing | 🌐 Translate button |
+| **auto** | Nothing | Auto-reply with official-lang translation + 🌐 button |
+
+4. Pressing the 🌐 button (or right-click → Translate) shows an ephemeral translation in the user's personal language (set via `/language set`).
+
+## Slash Commands
+
+| Command | Description | Permission |
+|---|---|---|
+| `/language set <lang>` | Set your preferred translation language | Everyone |
+| `/language show` | Show your current language | Everyone |
+| `/officiallang set <Auto\|English\|Japanese\|Korean>` | Set the server's official language | Manage Server |
+| `/officiallang show` | Show the official language (with auto-detection stats) | Everyone |
+| `/mode set <button\|auto>` | Set the delivery mode | Manage Server |
+| `/mode show` | Show the current delivery mode | Everyone |
+| `/trans [count:N]` | Translate recent N messages (default 4, max 20) | Everyone |
+| `/trans [message:<ID or link>]` | Translate a specific message | Everyone |
+| `/translate <text> [to:<lang>]` | Translate arbitrary text (ephemeral) | Everyone |
+| `/glossary add <term> [rendering]` | Add a glossary term | Manage Server |
+| `/glossary remove <term>` | Remove a glossary term | Manage Server |
+| `/glossary list` | List glossary entries | Everyone |
+| `/summarize [count] [lang]` | Summarize recent conversation | Everyone |
+| `/usage` | Show API usage statistics | Everyone |
+| Right-click → **Translate** | Context menu translation | Everyone |
+
+Slash commands are registered automatically when the bot starts.
+
+## Official Language
+
+The official language determines which messages are "native" and need no translation:
+
+- **Auto** (default): The bot detects the most-used language after 10+ messages. Until then, defaults to English.
+- **Manual**: Set explicitly with `/officiallang set`. Overrides auto-detection.
+
+Use `/officiallang show` to see the current effective language and detection stats.
 
 ## Discord Setup
 
@@ -36,10 +75,10 @@ Set:
 - `DISCORD_TOKEN` — bot token from Developer Portal
 - `ANTHROPIC_API_KEY` — Anthropic API key
 - `ANTHROPIC_MODEL` — defaults to `claude-haiku-4-5`
-- `GUILD_ID` — optional; not currently used
 - `DELIVERY_MODE` — `auto` (default, full translation) or `log_only` (development, stdout only)
-- `PRICE_IN_PER_MTOK` — input token price per million tokens (default `1`)
-- `PRICE_OUT_PER_MTOK` — output token price per million tokens (default `5`)
+- `SUMMARIZE_MODEL` — model for /summarize (default `claude-opus-4-8`)
+- `PRICE_TABLE_JSON` — JSON object mapping model names to `{in, out}` per-Mtok prices
+- `BUDGET_ALERT_USD` — monthly spending alert threshold (default `30`)
 
 ## Commands
 
@@ -61,16 +100,6 @@ Build and test:
 npm run build
 npm test
 ```
-
-## Slash Commands
-
-- `/language set <English|Japanese|Korean>` saves the user's preferred language.
-- `/language show` shows the saved language. Unset users default to English.
-- `/mode set <button|auto>` sets the server's delivery mode (requires **Manage Server** permission).
-- `/mode show` shows the current delivery mode.
-- `/usage` shows API usage statistics (call count, token totals, estimated cost) for all time and the last 7 days.
-
-Slash commands are registered automatically when the bot starts.
 
 ## Deployment (systemd user service)
 

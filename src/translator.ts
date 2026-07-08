@@ -102,6 +102,56 @@ export async function translate(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+export interface BatchTranslateItem {
+  authorName: string;
+  content: string;
+}
+
+export async function translateBatch(
+  items: BatchTranslateItem[],
+  targetLang: UserLang,
+  glossary: GlossaryEntry[] = []
+): Promise<string> {
+  const model = process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
+  const client = new Anthropic({ timeout: 15_000, maxRetries: 0 });
+
+  const transcript = items
+    .map((item) => `**${item.authorName}**: ${item.content}`)
+    .join('\n');
+
+  const languageName = LANG_NAMES[targetLang];
+  let system =
+    `You are a Discord chat translator. Translate each line to ${languageName}. ` +
+    'Preserve the exact format: **AuthorName**: translated text. Translate every line.';
+  if (glossary.length > 0) {
+    const lines = glossary.map((e) =>
+      e.rendering
+        ? `- "${e.term}" → "${e.rendering}"`
+        : `- "${e.term}" → keep as-is (do not translate)`
+    );
+    system += `\n\nGlossary:\n${lines.join('\n')}`;
+  }
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const res = await client.messages.create({
+        model,
+        max_tokens: 2048,
+        system,
+        messages: [{ role: 'user', content: transcript }]
+      });
+
+      recordUsage(model, res.usage.input_tokens, res.usage.output_tokens);
+      return res.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 export function buildSummarizePrompt(targetLang: UserLang): string {
   const languageName = LANG_NAMES[targetLang];
   return (

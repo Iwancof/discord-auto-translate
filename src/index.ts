@@ -19,12 +19,16 @@ import { executeUsageCommand, usageCommand } from './commands/usage.js';
 import { executeGlossaryCommand, glossaryCommand } from './commands/glossary.js';
 import { executeTranslateCommand, translateCommand } from './commands/translate.js';
 import { executeSummarizeCommand, summarizeCommand } from './commands/summarize.js';
+import { executeOfficialLangCommand, officialLangCommand } from './commands/officiallang.js';
+import { executeTransCommand, transCommand } from './commands/trans.js';
 import {
   checkAndMarkBudgetCrossed,
+  getEffectiveOfficialLang,
   getGlossaryEntries,
   getGuildMode,
   getMonthlyTotalUSD,
   getUserLang,
+  incrementLangStat,
   type UserLang
 } from './db.js';
 import {
@@ -74,6 +78,8 @@ async function main(): Promise<void> {
       glossaryCommand.toJSON(),
       translateCommand.toJSON(),
       summarizeCommand.toJSON(),
+      officialLangCommand.toJSON(),
+      transCommand.toJSON(),
       translateContextMenu.toJSON()
     ]);
   });
@@ -100,6 +106,13 @@ async function main(): Promise<void> {
             break;
           case 'summarize':
             await executeSummarizeCommand(interaction, client.user!.id);
+            await maybeSendBudgetAlert(client);
+            break;
+          case 'officiallang':
+            await executeOfficialLangCommand(interaction);
+            break;
+          case 'trans':
+            await executeTransCommand(interaction, client.user!.id);
             await maybeSendBudgetAlert(client);
             break;
           default:
@@ -145,9 +158,16 @@ async function main(): Promise<void> {
       const sourceLang = detectLanguage(translatable);
       const glossary = message.guildId ? getGlossaryEntries(message.guildId) : [];
 
+      if (message.guildId) {
+        incrementLangStat(message.guildId, sourceLang);
+      }
+
       const guildMode = message.guildId ? getGuildMode(message.guildId) : 'button';
-      const action = resolveDispatch(sourceLang, deliveryMode, guildMode);
+      const officialLang = message.guildId ? getEffectiveOfficialLang(message.guildId) : 'en';
+      const action = resolveDispatch(sourceLang, deliveryMode, guildMode, officialLang);
       switch (action.type) {
+        case 'none':
+          break;
         case 'log': {
           const translation = await translate(translatable, action.targetLang, context, { glossary });
           if (translation) {
@@ -206,7 +226,8 @@ async function main(): Promise<void> {
 
       const glossary = msg.guildId ? getGlossaryEntries(msg.guildId) : [];
       const context = getContext(msg.channelId);
-      const translation = await translate(translatable, 'en', context, { glossary });
+      const editTargetLang = msg.guildId ? getEffectiveOfficialLang(msg.guildId) : 'en';
+      const translation = await translate(translatable, editTargetLang, context, { glossary });
       if (translation) {
         const channel = msg.channel;
         if (channel && 'messages' in channel) {

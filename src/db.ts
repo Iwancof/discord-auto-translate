@@ -46,10 +46,37 @@ function getDb(): Database.Database {
     `);
   }
 
+  const gsSchema = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='guild_settings'"
+  ).get() as { sql: string } | undefined;
+
+  if (gsSchema && !gsSchema.sql.includes('official_lang')) {
+    db.exec('ALTER TABLE guild_settings RENAME TO _guild_settings_v1');
+    db.exec(`
+      CREATE TABLE guild_settings (
+        guild_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL CHECK (mode IN ('auto', 'button')),
+        official_lang TEXT NOT NULL DEFAULT 'auto' CHECK (official_lang IN ('auto', 'en', 'ja', 'ko'))
+      )
+    `);
+    db.exec("INSERT INTO guild_settings (guild_id, mode) SELECT guild_id, mode FROM _guild_settings_v1");
+    db.exec('DROP TABLE _guild_settings_v1');
+  } else if (!gsSchema) {
+    db.exec(`
+      CREATE TABLE guild_settings (
+        guild_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL CHECK (mode IN ('auto', 'button')),
+        official_lang TEXT NOT NULL DEFAULT 'auto' CHECK (official_lang IN ('auto', 'en', 'ja', 'ko'))
+      )
+    `);
+  }
+
   db.exec(`
-    CREATE TABLE IF NOT EXISTS guild_settings (
-      guild_id TEXT PRIMARY KEY,
-      mode TEXT NOT NULL CHECK (mode IN ('auto', 'button'))
+    CREATE TABLE IF NOT EXISTS lang_stats (
+      guild_id TEXT NOT NULL,
+      lang TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (guild_id, lang)
     )
   `);
 
@@ -83,6 +110,19 @@ function getDb(): Database.Database {
 }
 
 export type GuildMode = 'auto' | 'button';
+export type OfficialLangSetting = 'auto' | 'en' | 'ja' | 'ko';
+
+export interface LangStat {
+  lang: string;
+  count: number;
+}
+
+export function resolveOfficialLang(setting: OfficialLangSetting, stats: LangStat[]): UserLang {
+  if (setting !== 'auto') return setting;
+  const total = stats.reduce((s, e) => s + e.count, 0);
+  if (total < 10) return 'en';
+  return (stats[0]?.lang ?? 'en') as UserLang;
+}
 
 export function getGuildMode(guildId: string): GuildMode {
   const row = getDb()
@@ -99,6 +139,45 @@ export function setGuildMode(guildId: string, mode: GuildMode): void {
        ON CONFLICT(guild_id) DO UPDATE SET mode = excluded.mode`
     )
     .run(guildId, mode);
+}
+
+export function getOfficialLangSetting(guildId: string): OfficialLangSetting {
+  const row = getDb()
+    .prepare('SELECT official_lang FROM guild_settings WHERE guild_id = ?')
+    .get(guildId) as { official_lang: OfficialLangSetting } | undefined;
+  return row?.official_lang ?? 'auto';
+}
+
+export function setOfficialLangSetting(guildId: string, lang: OfficialLangSetting): void {
+  getDb()
+    .prepare(
+      `INSERT INTO guild_settings (guild_id, mode, official_lang)
+       VALUES (?, 'button', ?)
+       ON CONFLICT(guild_id) DO UPDATE SET official_lang = excluded.official_lang`
+    )
+    .run(guildId, lang);
+}
+
+export function incrementLangStat(guildId: string, lang: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO lang_stats (guild_id, lang, count)
+       VALUES (?, ?, 1)
+       ON CONFLICT(guild_id, lang) DO UPDATE SET count = count + 1`
+    )
+    .run(guildId, lang);
+}
+
+export function getLangStats(guildId: string): LangStat[] {
+  return getDb()
+    .prepare('SELECT lang, count FROM lang_stats WHERE guild_id = ? ORDER BY count DESC')
+    .all(guildId) as LangStat[];
+}
+
+export function getEffectiveOfficialLang(guildId: string): UserLang {
+  const setting = getOfficialLangSetting(guildId);
+  const stats = getLangStats(guildId);
+  return resolveOfficialLang(setting, stats);
 }
 
 export function getUserLang(userId: string): UserLang {
