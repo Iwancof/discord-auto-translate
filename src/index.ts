@@ -78,12 +78,12 @@ async function main(): Promise<void> {
       const sourceLang = detectLanguage(translatable);
 
       if (deliveryMode === 'log_only') {
-        const targetLang: UserLang = sourceLang === 'ja' ? 'en' : 'ja';
+        const targetLang: UserLang = sourceLang === 'en' ? 'ja' : 'en';
         const translation = await translate(translatable, targetLang, context);
         if (translation) {
           new LogOnlyDelivery().deliver(message, translation, targetLang);
         }
-      } else if (sourceLang === 'ja') {
+      } else if (sourceLang !== 'en') {
         await message.channel.sendTyping();
         const translation = await translate(translatable, 'en', context);
         if (translation) {
@@ -109,23 +109,9 @@ async function handleTranslateButton(interaction: ButtonInteraction): Promise<vo
   const messageId = interaction.customId.slice(3);
   const userLang = getUserLang(interaction.user.id);
 
-  if (userLang === 'en') {
-    await interaction.reply({
-      content: 'Set your language first with `/language set` to see translations.',
-      flags: MessageFlags.Ephemeral
-    });
-    return;
-  }
-
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const cached = translationCache.get(messageId, userLang);
-    if (cached) {
-      await interaction.editReply({ content: cached });
-      return;
-    }
-
     const channel = interaction.channel;
     if (!channel) {
       await interaction.editReply({ content: 'Could not access the channel.' });
@@ -136,6 +122,20 @@ async function handleTranslateButton(interaction: ButtonInteraction): Promise<vo
     const translatable = extractTranslatable(originalMsg.content);
     if (!translatable) {
       await interaction.editReply({ content: '(Nothing to translate)' });
+      return;
+    }
+
+    const sourceLang = detectLanguage(translatable);
+    if (userLang === sourceLang) {
+      await interaction.editReply({
+        content: 'Set your language first with `/language set` to see translations.'
+      });
+      return;
+    }
+
+    const cached = translationCache.get(messageId, userLang);
+    if (cached) {
+      await interaction.editReply({ content: cached });
       return;
     }
 

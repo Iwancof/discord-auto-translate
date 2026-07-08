@@ -30,6 +30,14 @@ describe('buildSystemPrompt / buildUserContent', () => {
     expect(user).toContain('Alice: Are we meeting tomorrow?');
     expect(user).toContain('Target language: English');
   });
+
+  it('uses Korean language name for ko target', () => {
+    const system = buildSystemPrompt('ko');
+    const user = buildUserContent('Hello there', 'ko', []);
+
+    expect(system).toContain('Korean translation');
+    expect(user).toContain('Target language: Korean');
+  });
 });
 
 describe('translate', () => {

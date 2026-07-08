@@ -7,7 +7,8 @@ import { getUserLang, setUserLang, type UserLang } from '../db.js';
 
 const languageChoices = [
   { name: 'English', value: 'en' },
-  { name: 'Japanese', value: 'ja' }
+  { name: 'Japanese', value: 'ja' },
+  { name: 'Korean', value: 'ko' }
 ] as const;
 
 export const languageCommand = new SlashCommandBuilder()
@@ -51,6 +52,8 @@ export async function executeLanguageCommand(
   });
 }
 
+const LANG_NAMES: Record<UserLang, string> = { en: 'English', ja: 'Japanese', ko: 'Korean' };
+
 function formatLang(lang: UserLang): string {
-  return lang === 'ja' ? 'Japanese' : 'English';
+  return LANG_NAMES[lang];
 }

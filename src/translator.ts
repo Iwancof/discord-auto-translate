@@ -9,8 +9,10 @@ export interface ChatContextItem {
 const DEFAULT_MODEL = 'claude-haiku-4-5';
 const SKIP_TOKEN = 'SKIP';
 
+const LANG_NAMES: Record<UserLang, string> = { en: 'English', ja: 'Japanese', ko: 'Korean' };
+
 export function buildSystemPrompt(targetLang: UserLang): string {
-  const languageName = targetLang === 'ja' ? 'Japanese' : 'English';
+  const languageName = LANG_NAMES[targetLang];
   return (
     'You are a fast Discord chat translator. Translate naturally for chat readers. ' +
     'Use recent context when it helps. Preserve tone, mentions, emoji, and line breaks. ' +
@@ -24,7 +26,7 @@ export function buildUserContent(
   targetLang: UserLang,
   context: readonly ChatContextItem[]
 ): string {
-  const languageName = targetLang === 'ja' ? 'Japanese' : 'English';
+  const languageName = LANG_NAMES[targetLang];
   const recentContext = context
     .slice(-8)
     .map((item) => `- ${item.authorName}: ${item.content}`)
