@@ -21,6 +21,9 @@ const INLINE_CODE_RE = /`[^`\n]*`/g;
 const URL_RE = /^https?:\/\/\S+$/iu;
 const CUSTOM_EMOJI_RE = /<a?:[A-Za-z0-9_~]+:\d+>/g;
 const EMOJI_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\uFE0F\u200D]/gu;
+// User/role/channel mentions, slash-command mentions, timestamps, @everyone/@here \u2014
+// language-independent tokens that carry no translatable text.
+const MENTION_RE = /<@[!&]?\d+>|<#\d+>|<\/[-\w ]+:\d+>|<t:\d+(?::\w)?>|@everyone|@here/g;
 
 export function extractTranslatable(content: string): string | null {
   const trimmed = content.trim();
@@ -91,6 +94,7 @@ function normalizeForTrivial(text: string): string {
     .replace(INLINE_CODE_RE, ' ')
     .replace(/\[code\]/giu, ' ')
     .replace(CUSTOM_EMOJI_RE, ' ')
+    .replace(MENTION_RE, ' ')
     .replace(EMOJI_RE, ' ')
     .replace(/[.!?。！、,~ー]+/gu, ' ')
     .replace(/\s+/g, ' ')
@@ -103,7 +107,11 @@ function isUrlOnly(text: string): boolean {
 }
 
 function isEmojiOnly(text: string): boolean {
-  const stripped = text.replace(CUSTOM_EMOJI_RE, '').replace(EMOJI_RE, '').trim();
+  const stripped = text
+    .replace(CUSTOM_EMOJI_RE, '')
+    .replace(MENTION_RE, '')
+    .replace(EMOJI_RE, '')
+    .trim();
   return stripped.length === 0;
 }
 
