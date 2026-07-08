@@ -2,7 +2,7 @@ import { config as loadEnv } from 'dotenv';
 // この bot は自前の .env を正とする(シェルに他プロジェクトの DISCORD_TOKEN が居ても負けない)
 loadEnv({ override: true });
 import { Client, Events, GatewayIntentBits, MessageFlags, type ButtonInteraction } from 'discord.js';
-import { executeLanguageCommand, languageCommand } from './commands/language.js';
+import { executeLanguageCommand, formatLang, languageCommand } from './commands/language.js';
 import { getUserLang, type UserLang } from './db.js';
 import {
   AutoReplyDelivery,
@@ -135,7 +135,7 @@ async function handleTranslateButton(interaction: ButtonInteraction): Promise<vo
     const sourceLang = detectLanguage(translatable);
     if (userLang === sourceLang) {
       await interaction.editReply({
-        content: 'Set your language first with `/language set` to see translations.'
+        content: `This message is already in your language (${formatLang(userLang)}). Use \`/language set\` to pick a different one.`
       });
       return;
     }

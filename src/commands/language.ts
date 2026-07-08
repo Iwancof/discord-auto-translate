@@ -54,6 +54,6 @@ export async function executeLanguageCommand(
 
 const LANG_NAMES: Record<UserLang, string> = { en: 'English', ja: 'Japanese', ko: 'Korean' };
 
-function formatLang(lang: UserLang): string {
+export function formatLang(lang: UserLang): string {
   return LANG_NAMES[lang];
 }
