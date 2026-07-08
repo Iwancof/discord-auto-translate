@@ -41,7 +41,7 @@ Language detection is regex-based (script/diacritic heuristics). French or Vietn
 | `/summarize [count] [lang]` | Summarize recent conversation | Everyone |
 | `/usage` | Show API usage statistics | Everyone |
 | Right-click → **Translate** | Context menu translation (ephemeral, your `/language`) | Everyone |
-| Right-click → **Translate to...** | Translate to your `/language`; choose to show privately or post to the channel | Everyone |
+| Right-click → **Translate to...** | Pick a target language (defaults to your `/language`) and show privately or post to the channel | Everyone |
 
 Slash commands are registered automatically when the bot starts.
 

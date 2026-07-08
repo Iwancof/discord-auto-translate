@@ -53,8 +53,13 @@ import {
 } from './buttonBatcher.js';
 import { extractTranslatable, isTrivial, shouldBatchForButton, shouldTranslate } from './filter.js';
 import {
+  buildLangSelectOptions,
   buildTranslateSelectOptions,
+  buildVisibilityCustomId,
+  parseLangSelectValue,
   parseTranslateSelectValue,
+  parseVisibilityCustomId,
+  TRANSLATE_LANG_SELECT_PREFIX,
   TRANSLATE_SELECT_PREFIX
 } from './translateMenu.js';
 import { translate, type ChatContextItem } from './translator.js';
@@ -182,6 +187,11 @@ async function main(): Promise<void> {
 
     if (interaction.isMessageContextMenuCommand() && interaction.commandName === 'Translate to...') {
       await handleTranslateToContextMenu(interaction);
+      return;
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith(TRANSLATE_LANG_SELECT_PREFIX)) {
+      await handleTranslateLangSelect(interaction);
       return;
     }
 
@@ -484,33 +494,57 @@ async function handleTranslateContextMenu(
   }
 }
 
+function buildTranslateMenuRows(
+  messageId: string,
+  lang: UserLang
+): Array<ActionRowBuilder<StringSelectMenuBuilder>> {
+  const langSelect = new StringSelectMenuBuilder()
+    .setCustomId(`${TRANSLATE_LANG_SELECT_PREFIX}${messageId}`)
+    .setPlaceholder('Target language')
+    .addOptions(buildLangSelectOptions(lang));
+  const visibilitySelect = new StringSelectMenuBuilder()
+    .setCustomId(buildVisibilityCustomId(messageId, lang))
+    .setPlaceholder('Where to show the translation')
+    .addOptions(buildTranslateSelectOptions(formatLang(lang)));
+  return [
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(langSelect),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(visibilitySelect)
+  ];
+}
+
 async function handleTranslateToContextMenu(
   interaction: MessageContextMenuCommandInteraction
 ): Promise<void> {
   const userLang = getUserLang(interaction.user.id);
-  const select = new StringSelectMenuBuilder()
-    .setCustomId(`${TRANSLATE_SELECT_PREFIX}${interaction.targetMessage.id}`)
-    .setPlaceholder('Where to show the translation')
-    .addOptions(buildTranslateSelectOptions(formatLang(userLang)));
-  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
   await interaction.reply({
     content: 'Translate this message:',
-    components: [row],
+    components: buildTranslateMenuRows(interaction.targetMessage.id, userLang),
     flags: MessageFlags.Ephemeral
   });
+}
+
+async function handleTranslateLangSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const messageId = interaction.customId.slice(TRANSLATE_LANG_SELECT_PREFIX.length);
+  const lang = parseLangSelectValue(interaction.values[0] ?? '');
+  if (!lang) {
+    await interaction.update({ content: 'Invalid selection.', components: [] });
+    return;
+  }
+  await interaction.update({ components: buildTranslateMenuRows(messageId, lang) });
 }
 
 async function handleTranslateSelect(
   interaction: StringSelectMenuInteraction,
   client: Client
 ): Promise<void> {
-  const messageId = interaction.customId.slice(TRANSLATE_SELECT_PREFIX.length);
+  const ref = parseVisibilityCustomId(interaction.customId);
   const visibility = parseTranslateSelectValue(interaction.values[0] ?? '');
-  if (!visibility) {
+  if (!ref || !visibility) {
     await interaction.update({ content: 'Invalid selection.', components: [] });
     return;
   }
-  const targetLang = getUserLang(interaction.user.id);
+  const messageId = ref.messageId;
+  const targetLang = ref.lang ?? getUserLang(interaction.user.id);
 
   await interaction.deferUpdate();
 
