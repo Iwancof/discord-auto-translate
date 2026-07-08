@@ -5,7 +5,6 @@ import { Client, Events, GatewayIntentBits, MessageFlags, type ButtonInteraction
 import { executeLanguageCommand, formatLang, languageCommand } from './commands/language.js';
 import { getUserLang, type UserLang } from './db.js';
 import {
-  AutoReplyDelivery,
   LogOnlyDelivery,
   postTranslateButton,
   TranslationCache
@@ -84,14 +83,6 @@ async function main(): Promise<void> {
           const translation = await translate(translatable, action.targetLang, context);
           if (translation) {
             new LogOnlyDelivery().deliver(message, translation, action.targetLang);
-          }
-          break;
-        }
-        case 'auto-reply': {
-          await message.channel.sendTyping();
-          const translation = await translate(translatable, action.targetLang, context);
-          if (translation) {
-            await new AutoReplyDelivery().deliver(message, translation, action.targetLang);
           }
           break;
         }

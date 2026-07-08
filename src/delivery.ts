@@ -2,7 +2,6 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  MessageFlags,
   type Message
 } from 'discord.js';
 import type { UserLang } from './db.js';
@@ -16,23 +15,6 @@ export class LogOnlyDelivery implements DeliveryStrategy {
     console.log(
       `[translation:${targetLang}] channel=${originalMsg.channelId} message=${originalMsg.id} author=${originalMsg.author.tag}\n${translation}`
     );
-  }
-}
-
-export class AutoReplyDelivery implements DeliveryStrategy {
-  async deliver(originalMsg: Message, translation: string, _targetLang: UserLang): Promise<void> {
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`tr:${originalMsg.id}`)
-        .setLabel('\u{1F310} Translate')
-        .setStyle(ButtonStyle.Secondary)
-    );
-    await originalMsg.reply({
-      content: translation,
-      components: [row],
-      allowedMentions: { repliedUser: false, parse: [] },
-      flags: [MessageFlags.SuppressNotifications]
-    });
   }
 }
 

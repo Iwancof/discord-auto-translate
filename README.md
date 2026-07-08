@@ -2,10 +2,9 @@
 
 [![CI](https://github.com/Iwancof/discord-auto-translate/actions/workflows/ci.yml/badge.svg)](https://github.com/Iwancof/discord-auto-translate/actions/workflows/ci.yml)
 
-Asymmetric Discord translation bot powered by Claude (Anthropic API).
+Discord translation bot powered by Claude (Anthropic API).
 
-- **Non-English messages** (Japanese) are automatically replied with an English translation.
-- **English messages** get a "Translate" button; pressing it shows an ephemeral translation in the user's preferred language.
+All messages (English, Japanese, Korean) get a "Translate" button. Pressing it shows an ephemeral translation in the user's preferred language (set via `/language set`).
 
 ## Discord Setup
 
