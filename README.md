@@ -38,6 +38,8 @@ Set:
 - `ANTHROPIC_MODEL` — defaults to `claude-haiku-4-5`
 - `GUILD_ID` — optional; not currently used
 - `DELIVERY_MODE` — `auto` (default, full translation) or `log_only` (development, stdout only)
+- `PRICE_IN_PER_MTOK` — input token price per million tokens (default `1`)
+- `PRICE_OUT_PER_MTOK` — output token price per million tokens (default `5`)
 
 ## Commands
 
@@ -66,6 +68,7 @@ npm test
 - `/language show` shows the saved language. Unset users default to English.
 - `/mode set <button|auto>` sets the server's delivery mode (requires **Manage Server** permission).
 - `/mode show` shows the current delivery mode.
+- `/usage` shows API usage statistics (call count, token totals, estimated cost) for all time and the last 7 days.
 
 Slash commands are registered automatically when the bot starts.
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createMock = vi.hoisted(() => vi.fn());
 const constructorMock = vi.hoisted(() => vi.fn());
+const recordUsageMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@anthropic-ai/sdk', () => ({
   default: class MockAnthropic {
@@ -14,6 +15,11 @@ vi.mock('@anthropic-ai/sdk', () => ({
     }
   }
 }));
+
+vi.mock('../src/db.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/db.js')>();
+  return { ...actual, recordUsage: recordUsageMock };
+});
 
 import { buildSystemPrompt, buildUserContent, translate } from '../src/translator.js';
 
@@ -38,12 +44,26 @@ describe('buildSystemPrompt / buildUserContent', () => {
     expect(system).toContain('Korean translation');
     expect(user).toContain('Target language: Korean');
   });
+
+  it('omits SKIP instruction when allowSkip is false', () => {
+    const system = buildSystemPrompt('en', false);
+    expect(system).not.toContain('SKIP');
+    expect(system).toContain('English translation');
+  });
+
+  it('includes SKIP instruction when allowSkip is true', () => {
+    const system = buildSystemPrompt('ja', true);
+    expect(system).toContain('output exactly SKIP');
+  });
 });
 
 describe('translate', () => {
+  const usageData = { input_tokens: 100, output_tokens: 20 };
+
   beforeEach(() => {
     createMock.mockReset();
     constructorMock.mockClear();
+    recordUsageMock.mockClear();
     process.env.ANTHROPIC_API_KEY = 'test-key';
     process.env.ANTHROPIC_MODEL = 'test-model';
   });
@@ -55,7 +75,8 @@ describe('translate', () => {
 
   it('uses ANTHROPIC_MODEL and returns null when the model outputs SKIP', async () => {
     createMock.mockResolvedValueOnce({
-      content: [{ type: 'text', text: 'SKIP' }]
+      content: [{ type: 'text', text: 'SKIP' }],
+      usage: usageData
     });
 
     await expect(translate('lol', 'ja', [])).resolves.toBeNull();
@@ -70,7 +91,7 @@ describe('translate', () => {
   it('retries once after a failed API request', async () => {
     createMock
       .mockRejectedValueOnce(new Error('timeout'))
-      .mockResolvedValueOnce({ content: [{ type: 'text', text: '了解です' }] });
+      .mockResolvedValueOnce({ content: [{ type: 'text', text: '了解です' }], usage: usageData });
 
     await expect(translate('Got it', 'ja', [])).resolves.toBe('了解です');
     expect(createMock).toHaveBeenCalledTimes(2);
@@ -87,7 +108,8 @@ describe('translate', () => {
 
   it('returns null for empty text response', async () => {
     createMock.mockResolvedValueOnce({
-      content: [{ type: 'text', text: '' }]
+      content: [{ type: 'text', text: '' }],
+      usage: usageData
     });
 
     await expect(translate('test', 'ja', [])).resolves.toBeNull();
@@ -96,12 +118,66 @@ describe('translate', () => {
   it('uses default model when ANTHROPIC_MODEL is unset', async () => {
     delete process.env.ANTHROPIC_MODEL;
     createMock.mockResolvedValueOnce({
-      content: [{ type: 'text', text: 'translated' }]
+      content: [{ type: 'text', text: 'translated' }],
+      usage: usageData
     });
 
     await translate('Hello', 'ja', []);
     expect(createMock).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'claude-haiku-4-5' })
     );
+  });
+
+  it('records usage on successful call', async () => {
+    createMock.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'こんにちは' }],
+      usage: { input_tokens: 150, output_tokens: 30 }
+    });
+
+    await translate('Hello', 'ja', []);
+    expect(recordUsageMock).toHaveBeenCalledWith('test-model', 150, 30);
+  });
+
+  it('does not record usage on failed call', async () => {
+    createMock
+      .mockRejectedValueOnce(new Error('fail1'))
+      .mockRejectedValueOnce(new Error('fail2'));
+
+    await expect(translate('Hello', 'ja', [])).rejects.toThrow();
+    expect(recordUsageMock).not.toHaveBeenCalled();
+  });
+
+  it('records usage for both retry attempts when first succeeds on retry', async () => {
+    createMock
+      .mockRejectedValueOnce(new Error('timeout'))
+      .mockResolvedValueOnce({
+        content: [{ type: 'text', text: 'OK' }],
+        usage: { input_tokens: 50, output_tokens: 10 }
+      });
+
+    await translate('test', 'ja', []);
+    expect(recordUsageMock).toHaveBeenCalledTimes(1);
+    expect(recordUsageMock).toHaveBeenCalledWith('test-model', 50, 10);
+  });
+
+  it('returns SKIP text as translation when allowSkip is false', async () => {
+    createMock.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'SKIP' }],
+      usage: usageData
+    });
+
+    const result = await translate('lol', 'ja', [], { allowSkip: false });
+    expect(result).toBe('SKIP');
+  });
+
+  it('passes allowSkip=false to buildSystemPrompt (no SKIP in system)', async () => {
+    createMock.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'translated' }],
+      usage: usageData
+    });
+
+    await translate('test', 'ja', [], { allowSkip: false });
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.system).not.toContain('SKIP');
   });
 });

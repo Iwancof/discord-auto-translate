@@ -4,6 +4,7 @@ loadEnv({ override: true });
 import { Client, Events, GatewayIntentBits, MessageFlags, type ButtonInteraction } from 'discord.js';
 import { executeLanguageCommand, formatLang, languageCommand } from './commands/language.js';
 import { executeModeCommand, modeCommand } from './commands/mode.js';
+import { executeUsageCommand, usageCommand } from './commands/usage.js';
 import { getGuildMode, getUserLang, type UserLang } from './db.js';
 import {
   AutoReplyDelivery,
@@ -38,7 +39,7 @@ async function main(): Promise<void> {
 
   client.once(Events.ClientReady, async (readyClient) => {
     console.log(`Logged in as ${readyClient.user.tag}.`);
-    await readyClient.application.commands.set([languageCommand.toJSON(), modeCommand.toJSON()]);
+    await readyClient.application.commands.set([languageCommand.toJSON(), modeCommand.toJSON(), usageCommand.toJSON()]);
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -61,6 +62,20 @@ async function main(): Promise<void> {
         await executeModeCommand(interaction);
       } catch (error) {
         const content = `Failed to handle /mode: ${formatError(error)}`;
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp({ content, ephemeral: true });
+        } else {
+          await interaction.reply({ content, ephemeral: true });
+        }
+      }
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'usage') {
+      try {
+        await executeUsageCommand(interaction);
+      } catch (error) {
+        const content = `Failed to handle /usage: ${formatError(error)}`;
         if (interaction.replied || interaction.deferred) {
           await interaction.followUp({ content, ephemeral: true });
         } else {
@@ -163,12 +178,12 @@ async function handleTranslateButton(interaction: ButtonInteraction): Promise<vo
     }
 
     const context = getContext(interaction.channelId);
-    const translation = await translate(translatable, userLang, context);
+    const translation = await translate(translatable, userLang, context, { allowSkip: false });
     if (translation) {
       translationCache.set(messageId, userLang, translation);
       await interaction.editReply({ content: translation });
     } else {
-      await interaction.editReply({ content: '(Translation skipped)' });
+      await interaction.editReply({ content: '(Empty translation — try again)' });
     }
   } catch (error) {
     console.error(`Button translation failed: ${formatError(error)}`);

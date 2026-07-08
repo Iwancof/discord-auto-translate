@@ -53,6 +53,16 @@ function getDb(): Database.Database {
     )
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS usage_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts INTEGER NOT NULL,
+      model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL,
+      output_tokens INTEGER NOT NULL
+    )
+  `);
+
   return db;
 }
 
@@ -91,4 +101,28 @@ export function setUserLang(userId: string, lang: UserLang): void {
        ON CONFLICT(user_id) DO UPDATE SET lang = excluded.lang`
     )
     .run(userId, lang);
+}
+
+export function recordUsage(model: string, inputTokens: number, outputTokens: number): void {
+  getDb()
+    .prepare('INSERT INTO usage_log (ts, model, input_tokens, output_tokens) VALUES (?, ?, ?, ?)')
+    .run(Math.floor(Date.now() / 1000), model, inputTokens, outputTokens);
+}
+
+export interface UsageBucket {
+  calls: number;
+  input: number;
+  output: number;
+}
+
+export function getUsageSummary(): { allTime: UsageBucket; last7d: UsageBucket } {
+  const d = getDb();
+  const allTime = d
+    .prepare('SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens),0) AS input, COALESCE(SUM(output_tokens),0) AS output FROM usage_log')
+    .get() as UsageBucket;
+  const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 86400;
+  const last7d = d
+    .prepare('SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens),0) AS input, COALESCE(SUM(output_tokens),0) AS output FROM usage_log WHERE ts >= ?')
+    .get(sevenDaysAgo) as UsageBucket;
+  return { allTime, last7d };
 }

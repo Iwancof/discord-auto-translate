@@ -1,9 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { UserLang } from './db.js';
+import { recordUsage, type UserLang } from './db.js';
 
 export interface ChatContextItem {
   authorName: string;
   content: string;
+}
+
+export interface TranslateOptions {
+  allowSkip?: boolean;
 }
 
 const DEFAULT_MODEL = 'claude-haiku-4-5';
@@ -11,13 +15,16 @@ const SKIP_TOKEN = 'SKIP';
 
 const LANG_NAMES: Record<UserLang, string> = { en: 'English', ja: 'Japanese', ko: 'Korean' };
 
-export function buildSystemPrompt(targetLang: UserLang): string {
+export function buildSystemPrompt(targetLang: UserLang, allowSkip = true): string {
   const languageName = LANG_NAMES[targetLang];
-  return (
+  const base =
     'You are a fast Discord chat translator. Translate naturally for chat readers. ' +
     'Use recent context when it helps. Preserve tone, mentions, emoji, and line breaks. ' +
-    `Output only the ${languageName} translation. ` +
-    `If the target reader does not need a translation because the content is slang, an acknowledgement, emoji-only, code-only, proper nouns only, or otherwise language-independent, output exactly ${SKIP_TOKEN} and nothing else.`
+    `Output only the ${languageName} translation.`;
+  if (!allowSkip) return base;
+  return (
+    base +
+    ` If the target reader does not need a translation because the content is slang, an acknowledgement, emoji-only, code-only, proper nouns only, or otherwise language-independent, output exactly ${SKIP_TOKEN} and nothing else.`
   );
 }
 
@@ -44,8 +51,11 @@ export function buildUserContent(
 export async function translate(
   text: string,
   targetLang: UserLang,
-  context: readonly ChatContextItem[]
+  context: readonly ChatContextItem[],
+  opts?: TranslateOptions
 ): Promise<string | null> {
+  const allowSkip = opts?.allowSkip ?? true;
+  const model = process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
   const client = new Anthropic({
     timeout: 10_000,
     maxRetries: 0
@@ -56,14 +66,16 @@ export async function translate(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const res = await client.messages.create({
-        model: process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL,
+        model,
         max_tokens: 1024,
-        system: buildSystemPrompt(targetLang),
+        system: buildSystemPrompt(targetLang, allowSkip),
         messages: [{ role: 'user', content: buildUserContent(text, targetLang, context) }]
       });
 
+      recordUsage(model, res.usage.input_tokens, res.usage.output_tokens);
+
       const output = res.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
-      if (!output || output === SKIP_TOKEN) {
+      if (!output || (allowSkip && output === SKIP_TOKEN)) {
         return null;
       }
 
