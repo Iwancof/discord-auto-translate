@@ -21,7 +21,7 @@ vi.mock('../src/db.js', async (importOriginal) => {
   return { ...actual, recordUsage: recordUsageMock };
 });
 
-import { buildSystemPrompt, buildUserContent, translate } from '../src/translator.js';
+import { buildSummarizePrompt, buildSystemPrompt, buildUserContent, summarize, translate } from '../src/translator.js';
 
 describe('buildSystemPrompt / buildUserContent', () => {
   it('includes context, preservation rules, and the SKIP instruction', () => {
@@ -54,6 +54,43 @@ describe('buildSystemPrompt / buildUserContent', () => {
   it('includes SKIP instruction when allowSkip is true', () => {
     const system = buildSystemPrompt('ja', true);
     expect(system).toContain('output exactly SKIP');
+  });
+
+  it('injects glossary with rendering into system prompt', () => {
+    const system = buildSystemPrompt('en', false, [
+      { term: '進捗', rendering: 'progress' },
+      { term: 'pwn', rendering: null }
+    ]);
+    expect(system).toContain('Glossary (apply these terms exactly as specified)');
+    expect(system).toContain('"進捗" → "progress"');
+    expect(system).toContain('"pwn" → keep as-is (do not translate)');
+  });
+
+  it('omits glossary section when glossary is empty', () => {
+    const system = buildSystemPrompt('en', false, []);
+    expect(system).not.toContain('Glossary');
+  });
+
+  it('places glossary before SKIP instruction', () => {
+    const system = buildSystemPrompt('en', true, [{ term: 'test', rendering: 'テスト' }]);
+    const glossaryIdx = system.indexOf('Glossary');
+    const skipIdx = system.indexOf('SKIP');
+    expect(glossaryIdx).toBeLessThan(skipIdx);
+  });
+});
+
+describe('buildSummarizePrompt', () => {
+  it('produces a prompt in the target language', () => {
+    const prompt = buildSummarizePrompt('ja');
+    expect(prompt).toContain('Japanese');
+    expect(prompt).toContain('summarizer');
+  });
+
+  it('mentions expected structure', () => {
+    const prompt = buildSummarizePrompt('en');
+    expect(prompt).toContain('key topics');
+    expect(prompt).toContain('decisions');
+    expect(prompt).toContain('TODO');
   });
 });
 
@@ -179,5 +216,68 @@ describe('translate', () => {
     await translate('test', 'ja', [], { allowSkip: false });
     const callArgs = createMock.mock.calls[0][0];
     expect(callArgs.system).not.toContain('SKIP');
+  });
+
+  it('injects glossary entries into system prompt', async () => {
+    createMock.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'translated' }],
+      usage: usageData
+    });
+
+    await translate('test', 'ja', [], {
+      glossary: [{ term: 'pwn', rendering: null }]
+    });
+    const callArgs = createMock.mock.calls[0][0];
+    expect(callArgs.system).toContain('Glossary');
+    expect(callArgs.system).toContain('"pwn"');
+  });
+});
+
+describe('summarize', () => {
+  beforeEach(() => {
+    createMock.mockReset();
+    recordUsageMock.mockClear();
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+  });
+
+  afterEach(() => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.SUMMARIZE_MODEL;
+  });
+
+  it('uses default model claude-opus-4-8', async () => {
+    createMock.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'summary' }],
+      usage: { input_tokens: 500, output_tokens: 200 }
+    });
+
+    const result = await summarize('transcript', 'en');
+    expect(result).toBe('summary');
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'claude-opus-4-8', max_tokens: 2000 })
+    );
+  });
+
+  it('uses SUMMARIZE_MODEL env when set', async () => {
+    process.env.SUMMARIZE_MODEL = 'custom-model';
+    createMock.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'result' }],
+      usage: { input_tokens: 100, output_tokens: 50 }
+    });
+
+    await summarize('transcript', 'ja');
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'custom-model' })
+    );
+  });
+
+  it('records usage with correct model', async () => {
+    createMock.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'summary' }],
+      usage: { input_tokens: 1000, output_tokens: 300 }
+    });
+
+    await summarize('transcript', 'ko');
+    expect(recordUsageMock).toHaveBeenCalledWith('claude-opus-4-8', 1000, 300);
   });
 });

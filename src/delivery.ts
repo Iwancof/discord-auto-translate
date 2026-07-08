@@ -8,7 +8,7 @@ import {
 import type { UserLang } from './db.js';
 
 export interface DeliveryStrategy {
-  deliver(originalMsg: Message, translation: string, targetLang: UserLang): Promise<void> | void;
+  deliver(originalMsg: Message, translation: string, targetLang: UserLang): Promise<Message | void> | void;
 }
 
 export class LogOnlyDelivery implements DeliveryStrategy {
@@ -20,14 +20,14 @@ export class LogOnlyDelivery implements DeliveryStrategy {
 }
 
 export class AutoReplyDelivery implements DeliveryStrategy {
-  async deliver(originalMsg: Message, translation: string, _targetLang: UserLang): Promise<void> {
+  async deliver(originalMsg: Message, translation: string, _targetLang: UserLang): Promise<Message> {
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`tr:${originalMsg.id}`)
         .setLabel('\u{1F310} Translate')
         .setStyle(ButtonStyle.Secondary)
     );
-    await originalMsg.reply({
+    return await originalMsg.reply({
       content: translation,
       components: [row],
       allowedMentions: { repliedUser: false, parse: [] },
@@ -36,15 +36,15 @@ export class AutoReplyDelivery implements DeliveryStrategy {
   }
 }
 
-export async function postTranslateButton(originalMsg: Message): Promise<void> {
+export async function postTranslateButton(originalMsg: Message): Promise<Message | undefined> {
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`tr:${originalMsg.id}`)
       .setLabel('\u{1F310} Translate')
       .setStyle(ButtonStyle.Secondary)
   );
-  if (!('send' in originalMsg.channel)) return;
-  await originalMsg.channel.send({ components: [row] });
+  if (!('send' in originalMsg.channel)) return undefined;
+  return await originalMsg.channel.send({ components: [row] });
 }
 
 export class TranslationCache {
@@ -70,5 +70,54 @@ export class TranslationCache {
       }
     }
     this.cache.set(key, value);
+  }
+
+  invalidateMessage(messageId: string): void {
+    const prefix = `${messageId}:`;
+    this.keys = this.keys.filter((k) => {
+      if (k.startsWith(prefix)) {
+        this.cache.delete(k);
+        return false;
+      }
+      return true;
+    });
+  }
+}
+
+export class CompanionTracker {
+  private map = new Map<string, string>();
+  private order: string[] = [];
+  private maxSize: number;
+
+  constructor(maxSize = 500) {
+    this.maxSize = maxSize;
+  }
+
+  track(originalMessageId: string, botMessageId: string): void {
+    if (!this.map.has(originalMessageId)) {
+      this.order.push(originalMessageId);
+      if (this.order.length > this.maxSize) {
+        const oldest = this.order.shift()!;
+        this.map.delete(oldest);
+      }
+    }
+    this.map.set(originalMessageId, botMessageId);
+  }
+
+  get(originalMessageId: string): string | undefined {
+    return this.map.get(originalMessageId);
+  }
+
+  remove(originalMessageId: string): string | undefined {
+    const botMsgId = this.map.get(originalMessageId);
+    if (botMsgId !== undefined) {
+      this.map.delete(originalMessageId);
+      this.order = this.order.filter((k) => k !== originalMessageId);
+    }
+    return botMsgId;
+  }
+
+  get size(): number {
+    return this.map.size;
   }
 }

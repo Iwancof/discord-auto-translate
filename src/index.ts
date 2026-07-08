@@ -1,13 +1,35 @@
 import { config as loadEnv } from 'dotenv';
-// この bot は自前の .env を正とする(シェルに他プロジェクトの DISCORD_TOKEN が居ても負けない)
 loadEnv({ override: true });
-import { Client, Events, GatewayIntentBits, MessageFlags, type ButtonInteraction } from 'discord.js';
+import {
+  ApplicationCommandType,
+  Client,
+  ContextMenuCommandBuilder,
+  Events,
+  GatewayIntentBits,
+  MessageFlags,
+  Partials,
+  Team,
+  User,
+  type ButtonInteraction,
+  type MessageContextMenuCommandInteraction
+} from 'discord.js';
 import { executeLanguageCommand, formatLang, languageCommand } from './commands/language.js';
 import { executeModeCommand, modeCommand } from './commands/mode.js';
 import { executeUsageCommand, usageCommand } from './commands/usage.js';
-import { getGuildMode, getUserLang, type UserLang } from './db.js';
+import { executeGlossaryCommand, glossaryCommand } from './commands/glossary.js';
+import { executeTranslateCommand, translateCommand } from './commands/translate.js';
+import { executeSummarizeCommand, summarizeCommand } from './commands/summarize.js';
+import {
+  checkAndMarkBudgetCrossed,
+  getGlossaryEntries,
+  getGuildMode,
+  getMonthlyTotalUSD,
+  getUserLang,
+  type UserLang
+} from './db.js';
 import {
   AutoReplyDelivery,
+  CompanionTracker,
   LogOnlyDelivery,
   postTranslateButton,
   TranslationCache
@@ -20,6 +42,11 @@ import { translate, type ChatContextItem } from './translator.js';
 const CONTEXT_LIMIT = 8;
 const contextByChannel = new Map<string, ChatContextItem[]>();
 const translationCache = new TranslationCache();
+const companionTracker = new CompanionTracker();
+
+const translateContextMenu = new ContextMenuCommandBuilder()
+  .setName('Translate')
+  .setType(ApplicationCommandType.Message);
 
 async function main(): Promise<void> {
   const token = process.env.DISCORD_TOKEN?.trim();
@@ -34,20 +61,52 @@ async function main(): Promise<void> {
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent
-    ]
+    ],
+    partials: [Partials.Message]
   });
 
   client.once(Events.ClientReady, async (readyClient) => {
     console.log(`Logged in as ${readyClient.user.tag}.`);
-    await readyClient.application.commands.set([languageCommand.toJSON(), modeCommand.toJSON(), usageCommand.toJSON()]);
+    await readyClient.application.commands.set([
+      languageCommand.toJSON(),
+      modeCommand.toJSON(),
+      usageCommand.toJSON(),
+      glossaryCommand.toJSON(),
+      translateCommand.toJSON(),
+      summarizeCommand.toJSON(),
+      translateContextMenu.toJSON()
+    ]);
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
-    if (interaction.isChatInputCommand() && interaction.commandName === 'language') {
+    if (interaction.isChatInputCommand()) {
       try {
-        await executeLanguageCommand(interaction);
+        switch (interaction.commandName) {
+          case 'language':
+            await executeLanguageCommand(interaction);
+            break;
+          case 'mode':
+            await executeModeCommand(interaction);
+            break;
+          case 'usage':
+            await executeUsageCommand(interaction);
+            break;
+          case 'glossary':
+            await executeGlossaryCommand(interaction);
+            break;
+          case 'translate':
+            await executeTranslateCommand(interaction);
+            await maybeSendBudgetAlert(client);
+            break;
+          case 'summarize':
+            await executeSummarizeCommand(interaction, client.user!.id);
+            await maybeSendBudgetAlert(client);
+            break;
+          default:
+            return;
+        }
       } catch (error) {
-        const content = `Failed to handle /language: ${formatError(error)}`;
+        const content = `Failed to handle /${interaction.commandName}: ${formatError(error)}`;
         if (interaction.replied || interaction.deferred) {
           await interaction.followUp({ content, ephemeral: true });
         } else {
@@ -57,36 +116,13 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (interaction.isChatInputCommand() && interaction.commandName === 'mode') {
-      try {
-        await executeModeCommand(interaction);
-      } catch (error) {
-        const content = `Failed to handle /mode: ${formatError(error)}`;
-        if (interaction.replied || interaction.deferred) {
-          await interaction.followUp({ content, ephemeral: true });
-        } else {
-          await interaction.reply({ content, ephemeral: true });
-        }
-      }
-      return;
-    }
-
-    if (interaction.isChatInputCommand() && interaction.commandName === 'usage') {
-      try {
-        await executeUsageCommand(interaction);
-      } catch (error) {
-        const content = `Failed to handle /usage: ${formatError(error)}`;
-        if (interaction.replied || interaction.deferred) {
-          await interaction.followUp({ content, ephemeral: true });
-        } else {
-          await interaction.reply({ content, ephemeral: true });
-        }
-      }
+    if (interaction.isMessageContextMenuCommand() && interaction.commandName === 'Translate') {
+      await handleTranslateContextMenu(interaction, client);
       return;
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('tr:')) {
-      await handleTranslateButton(interaction);
+      await handleTranslateButton(interaction, client);
     }
   });
 
@@ -107,12 +143,13 @@ async function main(): Promise<void> {
       }
 
       const sourceLang = detectLanguage(translatable);
+      const glossary = message.guildId ? getGlossaryEntries(message.guildId) : [];
 
       const guildMode = message.guildId ? getGuildMode(message.guildId) : 'button';
       const action = resolveDispatch(sourceLang, deliveryMode, guildMode);
       switch (action.type) {
         case 'log': {
-          const translation = await translate(translatable, action.targetLang, context);
+          const translation = await translate(translatable, action.targetLang, context, { glossary });
           if (translation) {
             new LogOnlyDelivery().deliver(message, translation, action.targetLang);
           }
@@ -120,15 +157,19 @@ async function main(): Promise<void> {
         }
         case 'auto-reply': {
           await message.channel.sendTyping();
-          const translation = await translate(translatable, action.targetLang, context);
+          const translation = await translate(translatable, action.targetLang, context, { glossary });
           if (translation) {
-            await new AutoReplyDelivery().deliver(message, translation, action.targetLang);
+            const botMsg = await new AutoReplyDelivery().deliver(message, translation, action.targetLang);
+            companionTracker.track(message.id, botMsg.id);
           }
+          await maybeSendBudgetAlert(client);
           break;
         }
-        case 'button-only':
-          await postTranslateButton(message);
+        case 'button-only': {
+          const botMsg = await postTranslateButton(message);
+          if (botMsg) companionTracker.track(message.id, botMsg.id);
           break;
+        }
       }
     } catch (error) {
       console.error(`Translation failed for message ${message.id}: ${formatError(error)}`);
@@ -140,10 +181,90 @@ async function main(): Promise<void> {
     }
   });
 
+  client.on(Events.MessageUpdate, async (_oldMessage, newMessage) => {
+    try {
+      const msg = newMessage.partial ? await newMessage.fetch() : newMessage;
+      if (msg.author.bot || msg.webhookId) return;
+
+      translationCache.invalidateMessage(msg.id);
+
+      const companionId = companionTracker.get(msg.id);
+      if (!companionId) return;
+
+      const translatable = extractTranslatable(msg.content);
+      if (!translatable) {
+        try {
+          const channel = msg.channel;
+          if (channel && 'messages' in channel) {
+            const companion = await channel.messages.fetch(companionId);
+            await companion.delete();
+          }
+        } catch { /* companion already deleted */ }
+        companionTracker.remove(msg.id);
+        return;
+      }
+
+      const glossary = msg.guildId ? getGlossaryEntries(msg.guildId) : [];
+      const context = getContext(msg.channelId);
+      const translation = await translate(translatable, 'en', context, { glossary });
+      if (translation) {
+        const channel = msg.channel;
+        if (channel && 'messages' in channel) {
+          const companion = await channel.messages.fetch(companionId);
+          await companion.edit({ content: translation });
+        }
+      }
+    } catch (error) {
+      console.error(`Edit tracking failed: ${formatError(error)}`);
+    }
+  });
+
+  client.on(Events.MessageDelete, async (message) => {
+    translationCache.invalidateMessage(message.id);
+    const companionId = companionTracker.remove(message.id);
+    if (!companionId) return;
+
+    try {
+      const channel = message.channel;
+      if (channel && 'messages' in channel) {
+        const companion = await channel.messages.fetch(companionId);
+        await companion.delete();
+      }
+    } catch { /* companion already deleted */ }
+  });
+
   await client.login(token);
 }
 
-async function handleTranslateButton(interaction: ButtonInteraction): Promise<void> {
+async function translateForUser(
+  messageId: string,
+  content: string,
+  userLang: UserLang,
+  guildId: string | null,
+  channelId: string
+): Promise<string> {
+  const translatable = extractTranslatable(content);
+  if (!translatable) return '(Nothing to translate)';
+
+  const sourceLang = detectLanguage(translatable);
+  if (userLang === sourceLang) {
+    return `This message is already in your language (${formatLang(userLang)}). Use \`/language set\` to pick a different one.`;
+  }
+
+  const cached = translationCache.get(messageId, userLang);
+  if (cached) return cached;
+
+  const glossary = guildId ? getGlossaryEntries(guildId) : [];
+  const context = getContext(channelId);
+  const translation = await translate(translatable, userLang, context, { allowSkip: false, glossary });
+  if (translation) {
+    translationCache.set(messageId, userLang, translation);
+    return translation;
+  }
+  return '(Empty translation — try again)';
+}
+
+async function handleTranslateButton(interaction: ButtonInteraction, client: Client): Promise<void> {
   const messageId = interaction.customId.slice(3);
   const userLang = getUserLang(interaction.user.id);
 
@@ -157,37 +278,62 @@ async function handleTranslateButton(interaction: ButtonInteraction): Promise<vo
     }
 
     const originalMsg = await channel.messages.fetch(messageId);
-    const translatable = extractTranslatable(originalMsg.content);
-    if (!translatable) {
-      await interaction.editReply({ content: '(Nothing to translate)' });
-      return;
-    }
-
-    const sourceLang = detectLanguage(translatable);
-    if (userLang === sourceLang) {
-      await interaction.editReply({
-        content: `This message is already in your language (${formatLang(userLang)}). Use \`/language set\` to pick a different one.`
-      });
-      return;
-    }
-
-    const cached = translationCache.get(messageId, userLang);
-    if (cached) {
-      await interaction.editReply({ content: cached });
-      return;
-    }
-
-    const context = getContext(interaction.channelId);
-    const translation = await translate(translatable, userLang, context, { allowSkip: false });
-    if (translation) {
-      translationCache.set(messageId, userLang, translation);
-      await interaction.editReply({ content: translation });
-    } else {
-      await interaction.editReply({ content: '(Empty translation — try again)' });
-    }
+    const result = await translateForUser(messageId, originalMsg.content, userLang, interaction.guildId, interaction.channelId);
+    await interaction.editReply({ content: result });
+    await maybeSendBudgetAlert(client);
   } catch (error) {
     console.error(`Button translation failed: ${formatError(error)}`);
     await interaction.editReply({ content: `Translation failed: ${formatError(error)}` });
+  }
+}
+
+async function handleTranslateContextMenu(
+  interaction: MessageContextMenuCommandInteraction,
+  client: Client
+): Promise<void> {
+  const targetMessage = interaction.targetMessage;
+  const userLang = getUserLang(interaction.user.id);
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  try {
+    const result = await translateForUser(
+      targetMessage.id,
+      targetMessage.content,
+      userLang,
+      interaction.guildId,
+      interaction.channelId
+    );
+    await interaction.editReply({ content: result });
+    await maybeSendBudgetAlert(client);
+  } catch (error) {
+    console.error(`Context menu translation failed: ${formatError(error)}`);
+    await interaction.editReply({ content: `Translation failed: ${formatError(error)}` });
+  }
+}
+
+async function maybeSendBudgetAlert(client: Client): Promise<void> {
+  const threshold = Number(process.env.BUDGET_ALERT_USD) || 30;
+  if (!checkAndMarkBudgetCrossed(threshold)) return;
+
+  const total = getMonthlyTotalUSD();
+  const alertMsg = `⚠️ Translation bot monthly spending has reached **$${total.toFixed(2)}** (alert threshold: $${threshold}).`;
+
+  try {
+    const app = await client.application!.fetch();
+    const owner = app.owner;
+    if (!owner) return;
+
+    if (owner instanceof User) {
+      await owner.send(alertMsg);
+    } else if (owner instanceof Team && owner.ownerId) {
+      const teamOwner = owner.members.get(owner.ownerId);
+      if (teamOwner?.user) {
+        await teamOwner.user.send(alertMsg);
+      }
+    }
+  } catch (error) {
+    console.error(`Budget alert DM failed: ${formatError(error)}`);
   }
 }
 
