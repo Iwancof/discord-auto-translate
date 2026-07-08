@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { extractTranslatable, isTrivial, shouldTranslate, type MessageLike } from '../src/filter.js';
+import {
+  extractTranslatable,
+  isAcknowledgement,
+  isTrivial,
+  shouldBatchForButton,
+  shouldTranslate,
+  type MessageLike
+} from '../src/filter.js';
 
 function message(overrides: Partial<MessageLike>): MessageLike {
   return {
@@ -78,6 +85,57 @@ describe('isTrivial', () => {
     expect(isTrivial('<@123456789012345678> thanks')).toBe(true);
     expect(isTrivial('<@123456789012345678> ありがとう')).toBe(true);
     expect(isTrivial('<@123456789012345678> could you review the deployment plan?')).toBe(false);
+  });
+});
+
+describe('isAcknowledgement', () => {
+  it('matches pattern slang and emoji-only', () => {
+    expect(isAcknowledgement('lol')).toBe(true);
+    expect(isAcknowledgement('それな')).toBe(true);
+    expect(isAcknowledgement('😀🎉')).toBe(true);
+    expect(isAcknowledgement('wwww')).toBe(true);
+  });
+
+  it('does not match short fragments that are not pure acks', () => {
+    expect(isAcknowledgement('あのさ')).toBe(false);
+    expect(isAcknowledgement('まって')).toBe(false);
+    expect(isAcknowledgement('abcdefg')).toBe(false);
+  });
+});
+
+describe('shouldBatchForButton', () => {
+  function message(overrides: Partial<MessageLike>): MessageLike {
+    return {
+      content: 'Please review this tomorrow.',
+      author: { bot: false },
+      webhookId: null,
+      attachments: { size: 0 },
+      ...overrides
+    };
+  }
+
+  it('accepts short fragments that shouldTranslate rejects', () => {
+    const short = message({ content: 'あのさ' });
+    expect(shouldTranslate(short)).toBe(false);
+    expect(shouldBatchForButton(short)).toBe(true);
+  });
+
+  it('rejects pure acknowledgements', () => {
+    expect(shouldBatchForButton(message({ content: 'lol' }))).toBe(false);
+    expect(shouldBatchForButton(message({ content: '草' }))).toBe(false);
+  });
+
+  it('rejects bots, mention-only, url-only, and code-heavy messages', () => {
+    expect(shouldBatchForButton(message({ author: { bot: true } }))).toBe(false);
+    expect(shouldBatchForButton(message({ content: '<@123456789012345678>' }))).toBe(false);
+    expect(shouldBatchForButton(message({ content: 'https://example.com' }))).toBe(false);
+    expect(
+      shouldBatchForButton(message({ content: '```ts\nconst a = 1;\nconst b = 2;\n``` ok' }))
+    ).toBe(false);
+  });
+
+  it('accepts substantial messages', () => {
+    expect(shouldBatchForButton(message({ content: 'Can you review this?' }))).toBe(true);
   });
 });
 

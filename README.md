@@ -9,15 +9,18 @@ Each server has an **official language** (auto-detected or manually set). Messag
 ## How it works
 
 1. A message arrives in the server.
-2. The bot detects the message language (English / Japanese / Korean).
+2. The bot detects the message language (English / Japanese / Korean / Arabic / French / Vietnamese).
 3. Dispatch depends on the **delivery mode** and the server's **official language**:
 
 | Delivery mode | Message = official lang | Message ≠ official lang |
 |---|---|---|
-| **button** (default) | Nothing | 🌐 Translate button |
+| **button** (default) | Nothing | 🌐 Translate button (debounced) |
 | **auto** | Nothing | Auto-reply with official-lang translation + 🌐 button |
 
-4. Pressing the 🌐 button (or right-click → Translate) shows an ephemeral translation in the user's personal language (set via `/language set`).
+4. In button mode the button is posted after a short quiet period (default 5 s, `BUTTON_DEBOUNCE_MS`). Consecutive messages from the same author within the window share **one** button, and pressing it translates them together as a single block — short fragments that would be skipped individually are included in the batch.
+5. Pressing the 🌐 button (or right-click → Translate) shows an ephemeral translation in the user's personal language (set via `/language set`).
+
+Language detection is regex-based (script/diacritic heuristics). French or Vietnamese text written without any accents is detected as English — use the manual translate menus in that case.
 
 ## Slash Commands
 
@@ -25,7 +28,7 @@ Each server has an **official language** (auto-detected or manually set). Messag
 |---|---|---|
 | `/language set <lang>` | Set your preferred translation language | Everyone |
 | `/language show` | Show your current language | Everyone |
-| `/officiallang set <Auto\|English\|Japanese\|Korean>` | Set the server's official language | Manage Server |
+| `/officiallang set <Auto\|English\|Japanese\|Korean\|Arabic\|French\|Vietnamese>` | Set the server's official language | Manage Server |
 | `/officiallang show` | Show the official language (with auto-detection stats) | Everyone |
 | `/mode set <button\|auto>` | Set the delivery mode | Manage Server |
 | `/mode show` | Show the current delivery mode | Everyone |
@@ -38,7 +41,7 @@ Each server has an **official language** (auto-detected or manually set). Messag
 | `/summarize [count] [lang]` | Summarize recent conversation | Everyone |
 | `/usage` | Show API usage statistics | Everyone |
 | Right-click → **Translate** | Context menu translation (ephemeral, your `/language`) | Everyone |
-| Right-click → **Translate to...** | Pick a language and show privately or post to the channel | Everyone |
+| Right-click → **Translate to...** | Translate to your `/language`; choose to show privately or post to the channel | Everyone |
 
 Slash commands are registered automatically when the bot starts.
 
@@ -80,6 +83,7 @@ Set:
 - `SUMMARIZE_MODEL` — model for /summarize (default `claude-opus-4-8`)
 - `PRICE_TABLE_JSON` — JSON object mapping model names to `{in, out}` per-Mtok prices
 - `BUDGET_ALERT_USD` — monthly spending alert threshold (default `30`)
+- `BUTTON_DEBOUNCE_MS` — quiet period before posting a translate button; consecutive messages within it share one button (default `5000`)
 
 ## Commands
 

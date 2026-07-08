@@ -13,6 +13,7 @@ import {
   Team,
   User,
   type ButtonInteraction,
+  type Message,
   type MessageContextMenuCommandInteraction,
   type StringSelectMenuInteraction
 } from 'discord.js';
@@ -43,7 +44,14 @@ import {
 } from './delivery.js';
 import { detectLanguage } from './detect.js';
 import { resolveDispatch } from './dispatch.js';
-import { extractTranslatable, shouldTranslate } from './filter.js';
+import {
+  BATCH_BUTTON_PREFIX,
+  buildBatchButtonCustomId,
+  ButtonBatcher,
+  parseBatchButtonCustomId,
+  type FlushedBatch
+} from './buttonBatcher.js';
+import { extractTranslatable, isTrivial, shouldBatchForButton, shouldTranslate } from './filter.js';
 import {
   buildTranslateSelectOptions,
   parseTranslateSelectValue,
@@ -55,6 +63,31 @@ const CONTEXT_LIMIT = 8;
 const contextByChannel = new Map<string, ChatContextItem[]>();
 const translationCache = new TranslationCache();
 const companionTracker = new CompanionTracker();
+
+// Debounce button posting: rapid consecutive messages from the same author
+// share one button that translates them as a single block.
+const buttonBatcher = new ButtonBatcher<Message>(
+  Number(process.env.BUTTON_DEBOUNCE_MS) || 5000,
+  (batch) => {
+    void flushButtonBatch(batch);
+  }
+);
+
+async function flushButtonBatch(batch: FlushedBatch<Message>): Promise<void> {
+  try {
+    // A lone short fragment stays below the trivial bar, same as before batching.
+    if (batch.count === 1 && isTrivial(batch.texts[0])) return;
+
+    const customId =
+      batch.count === 1
+        ? `tr:${batch.lastMessageId}`
+        : buildBatchButtonCustomId(batch.authorId, batch.firstMessageId, batch.lastMessageId);
+    const botMsg = await postTranslateButton(batch.lastPayload, customId);
+    if (botMsg) companionTracker.track(batch.lastMessageId, botMsg.id);
+  } catch (error) {
+    console.error(`Button batch flush failed: ${formatError(error)}`);
+  }
+}
 
 const translateContextMenu = new ContextMenuCommandBuilder()
   .setName('Translate')
@@ -157,6 +190,11 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (interaction.isButton() && interaction.customId.startsWith(BATCH_BUTTON_PREFIX)) {
+      await handleBatchTranslateButton(interaction, client);
+      return;
+    }
+
     if (interaction.isButton() && interaction.customId.startsWith('tr:')) {
       await handleTranslateButton(interaction, client);
     }
@@ -169,7 +207,9 @@ async function main(): Promise<void> {
 
     const context = getContext(message.channelId);
     try {
-      if (!shouldTranslate(message)) {
+      const substantial = shouldTranslate(message);
+      const batchable = shouldBatchForButton(message);
+      if (!substantial && !batchable) {
         return;
       }
 
@@ -181,7 +221,7 @@ async function main(): Promise<void> {
       const sourceLang = detectLanguage(translatable);
       const glossary = message.guildId ? getGlossaryEntries(message.guildId) : [];
 
-      if (message.guildId) {
+      if (substantial && message.guildId) {
         incrementLangStat(message.guildId, sourceLang);
       }
 
@@ -192,6 +232,7 @@ async function main(): Promise<void> {
         case 'none':
           break;
         case 'log': {
+          if (!substantial) break;
           const translation = await translate(translatable, action.targetLang, context, { glossary });
           if (translation) {
             new LogOnlyDelivery().deliver(message, translation, action.targetLang);
@@ -199,6 +240,7 @@ async function main(): Promise<void> {
           break;
         }
         case 'auto-reply': {
+          if (!substantial) break;
           await message.channel.sendTyping();
           const translation = await translate(translatable, action.targetLang, context, { glossary });
           if (translation) {
@@ -209,8 +251,7 @@ async function main(): Promise<void> {
           break;
         }
         case 'button-only': {
-          const botMsg = await postTranslateButton(message);
-          if (botMsg) companionTracker.track(message.id, botMsg.id);
+          buttonBatcher.add(message.channelId, message.author.id, message.id, translatable, message);
           break;
         }
       }
@@ -247,16 +288,19 @@ async function main(): Promise<void> {
         return;
       }
 
+      const channel = msg.channel;
+      if (!channel || !('messages' in channel)) return;
+      const companion = await channel.messages.fetch(companionId);
+      // Button-only companions carry no text; re-translating them would leak a
+      // public translation into button mode. The cache invalidation above is enough.
+      if (!companion.content) return;
+
       const glossary = msg.guildId ? getGlossaryEntries(msg.guildId) : [];
       const context = getContext(msg.channelId);
       const editTargetLang = msg.guildId ? getEffectiveOfficialLang(msg.guildId) : 'en';
       const translation = await translate(translatable, editTargetLang, context, { glossary });
       if (translation) {
-        const channel = msg.channel;
-        if (channel && 'messages' in channel) {
-          const companion = await channel.messages.fetch(companionId);
-          await companion.edit({ content: translation });
-        }
+        await companion.edit({ content: translation });
       }
     } catch (error) {
       console.error(`Edit tracking failed: ${formatError(error)}`);
@@ -311,16 +355,14 @@ async function translateMessageTo(
   return { kind: 'ok', text: translation };
 }
 
-function describeManualResult(result: ManualTranslateResult, hintLanguageCommand: boolean): string {
+function describeManualResult(result: ManualTranslateResult): string {
   switch (result.kind) {
     case 'ok':
       return result.text;
     case 'nothing':
       return '(Nothing to translate)';
     case 'same':
-      return hintLanguageCommand
-        ? `This message is already in your language (${formatLang(result.lang)}). Use \`/language set\` to pick a different one.`
-        : `This message is already in ${formatLang(result.lang)}.`;
+      return `This message is already in your language (${formatLang(result.lang)}). Use \`/language set\` to pick a different one.`;
     case 'empty':
       return '(Empty translation — try again)';
   }
@@ -334,7 +376,7 @@ async function translateForUser(
   channelId: string
 ): Promise<string> {
   const result = await translateMessageTo(messageId, content, userLang, guildId, channelId);
-  return describeManualResult(result, true);
+  return describeManualResult(result);
 }
 
 async function handleTranslateButton(interaction: ButtonInteraction, client: Client): Promise<void> {
@@ -356,6 +398,63 @@ async function handleTranslateButton(interaction: ButtonInteraction, client: Cli
     await maybeSendBudgetAlert(client);
   } catch (error) {
     console.error(`Button translation failed: ${formatError(error)}`);
+    await interaction.editReply({ content: `Translation failed: ${formatError(error)}` });
+  }
+}
+
+async function handleBatchTranslateButton(
+  interaction: ButtonInteraction,
+  client: Client
+): Promise<void> {
+  const ref = parseBatchButtonCustomId(interaction.customId);
+  if (!ref) return;
+  const userLang = getUserLang(interaction.user.id);
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  try {
+    const channel = interaction.channel;
+    if (!channel || !('messages' in channel)) {
+      await interaction.editReply({ content: 'Could not access the channel.' });
+      return;
+    }
+
+    const fetched = await channel.messages.fetch({
+      after: (BigInt(ref.firstMessageId) - 1n).toString(),
+      limit: 100
+    });
+    const members = [...fetched.values()]
+      .filter((m) => m.author.id === ref.authorId)
+      .filter(
+        (m) => BigInt(m.id) >= BigInt(ref.firstMessageId) && BigInt(m.id) <= BigInt(ref.lastMessageId)
+      )
+      .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
+    const texts = members
+      .map((m) => extractTranslatable(m.content))
+      .filter((t): t is string => !!t);
+
+    if (texts.length === 0) {
+      await interaction.editReply({ content: 'The original messages are no longer available.' });
+      return;
+    }
+
+    const joined = texts.join('\n');
+    if (detectLanguage(joined) === userLang) {
+      await interaction.editReply({
+        content: `These messages are already in your language (${formatLang(userLang)}). Use \`/language set\` to pick a different one.`
+      });
+      return;
+    }
+
+    const glossary = interaction.guildId ? getGlossaryEntries(interaction.guildId) : [];
+    const context = getContext(interaction.channelId);
+    const translation = await translate(joined, userLang, context, { allowSkip: false, glossary });
+    await interaction.editReply({
+      content: translation ? translation.slice(0, 2000) : '(Empty translation — try again)'
+    });
+    await maybeSendBudgetAlert(client);
+  } catch (error) {
+    console.error(`Batch button translation failed: ${formatError(error)}`);
     await interaction.editReply({ content: `Translation failed: ${formatError(error)}` });
   }
 }
@@ -388,10 +487,11 @@ async function handleTranslateContextMenu(
 async function handleTranslateToContextMenu(
   interaction: MessageContextMenuCommandInteraction
 ): Promise<void> {
+  const userLang = getUserLang(interaction.user.id);
   const select = new StringSelectMenuBuilder()
     .setCustomId(`${TRANSLATE_SELECT_PREFIX}${interaction.targetMessage.id}`)
-    .setPlaceholder('Language and where to show it')
-    .addOptions(buildTranslateSelectOptions());
+    .setPlaceholder('Where to show the translation')
+    .addOptions(buildTranslateSelectOptions(formatLang(userLang)));
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
   await interaction.reply({
     content: 'Translate this message:',
@@ -405,11 +505,12 @@ async function handleTranslateSelect(
   client: Client
 ): Promise<void> {
   const messageId = interaction.customId.slice(TRANSLATE_SELECT_PREFIX.length);
-  const choice = parseTranslateSelectValue(interaction.values[0] ?? '');
-  if (!choice) {
+  const visibility = parseTranslateSelectValue(interaction.values[0] ?? '');
+  if (!visibility) {
     await interaction.update({ content: 'Invalid selection.', components: [] });
     return;
   }
+  const targetLang = getUserLang(interaction.user.id);
 
   await interaction.deferUpdate();
 
@@ -424,24 +525,24 @@ async function handleTranslateSelect(
     const result = await translateMessageTo(
       messageId,
       originalMsg.content,
-      choice.lang,
+      targetLang,
       interaction.guildId,
       interaction.channelId
     );
 
     if (result.kind !== 'ok') {
-      await interaction.editReply({ content: describeManualResult(result, false), components: [] });
+      await interaction.editReply({ content: describeManualResult(result), components: [] });
       return;
     }
 
-    if (choice.visibility === 'public') {
+    if (visibility === 'public') {
       await originalMsg.reply({
-        content: `${result.text}\n-# \u{1F310} ${formatLang(choice.lang)} · requested by <@${interaction.user.id}>`,
+        content: `${result.text}\n-# \u{1F310} ${formatLang(targetLang)} · requested by <@${interaction.user.id}>`,
         allowedMentions: { repliedUser: false, parse: [] },
         flags: [MessageFlags.SuppressNotifications]
       });
       await interaction.editReply({
-        content: `Posted the ${formatLang(choice.lang)} translation to the channel.`,
+        content: `Posted the ${formatLang(targetLang)} translation to the channel.`,
         components: []
       });
     } else {

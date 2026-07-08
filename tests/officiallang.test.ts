@@ -131,6 +131,25 @@ describe('getEffectiveOfficialLang', () => {
   });
 });
 
+describe('new languages (ar/fr/vi)', () => {
+  it('accepts fr as a manual official language', () => {
+    setOfficialLangSetting('g-fr', 'fr');
+    expect(getOfficialLangSetting('g-fr')).toBe('fr');
+    expect(getEffectiveOfficialLang('g-fr')).toBe('fr');
+  });
+
+  it('auto-detects vi from stats majority', () => {
+    for (let i = 0; i < 12; i++) incrementLangStat('g-vi', 'vi');
+    incrementLangStat('g-vi', 'en');
+    expect(getEffectiveOfficialLang('g-vi')).toBe('vi');
+  });
+
+  it('resolveOfficialLang handles ar majority', () => {
+    const stats: LangStat[] = [{ lang: 'ar', count: 20 }, { lang: 'en', count: 3 }];
+    expect(resolveOfficialLang('auto', stats)).toBe('ar');
+  });
+});
+
 describe('guild_settings migration (official_lang)', () => {
   it('migrates existing guild_settings without official_lang', async () => {
     const dbPath = process.env.BOT_DB_PATH!;
@@ -149,5 +168,25 @@ describe('guild_settings migration (official_lang)', () => {
     const { getGuildMode } = await import('../src/db.js');
     expect(getGuildMode('g1')).toBe('auto');
     expect(getOfficialLangSetting('g1')).toBe('auto');
+  });
+
+  it('migrates a 3-language official_lang CHECK to 6 languages, preserving values', () => {
+    const dbPath = process.env.BOT_DB_PATH!;
+    _resetDb();
+    const raw = new Database(dbPath);
+    raw.exec(`
+      CREATE TABLE guild_settings (
+        guild_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL CHECK (mode IN ('auto', 'button')),
+        official_lang TEXT NOT NULL DEFAULT 'auto' CHECK (official_lang IN ('auto', 'en', 'ja', 'ko'))
+      )
+    `);
+    raw.prepare("INSERT INTO guild_settings (guild_id, mode, official_lang) VALUES ('g1', 'auto', 'ja')").run();
+    raw.close();
+
+    _resetDb();
+    expect(getOfficialLangSetting('g1')).toBe('ja');
+    setOfficialLangSetting('g1', 'fr');
+    expect(getOfficialLangSetting('g1')).toBe('fr');
   });
 });

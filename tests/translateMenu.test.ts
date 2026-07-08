@@ -6,54 +6,39 @@ import {
 } from '../src/translateMenu.js';
 
 describe('buildTranslateSelectOptions', () => {
-  it('produces 6 options (3 langs × private/public)', () => {
-    const options = buildTranslateSelectOptions();
-    expect(options).toHaveLength(6);
+  it('produces exactly 2 options: private and public', () => {
+    const options = buildTranslateSelectOptions('Japanese');
+    expect(options).toHaveLength(2);
+    expect(options.map((o) => o.value)).toEqual(['private', 'public']);
   });
 
-  it('every option value round-trips through the parser', () => {
-    for (const option of buildTranslateSelectOptions()) {
-      const parsed = parseTranslateSelectValue(option.value);
-      expect(parsed).not.toBeNull();
+  it('embeds the target language name in both labels', () => {
+    const options = buildTranslateSelectOptions('French');
+    for (const option of options) {
+      expect(option.label).toContain('French');
     }
   });
 
-  it('lists private options before public ones', () => {
-    const options = buildTranslateSelectOptions();
-    const visibilities = options.map((o) => parseTranslateSelectValue(o.value)!.visibility);
-    expect(visibilities).toEqual(['private', 'private', 'private', 'public', 'public', 'public']);
-  });
-
-  it('covers all three languages in each visibility group', () => {
-    const options = buildTranslateSelectOptions();
-    const privateLangs = options.slice(0, 3).map((o) => parseTranslateSelectValue(o.value)!.lang);
-    const publicLangs = options.slice(3).map((o) => parseTranslateSelectValue(o.value)!.lang);
-    expect(privateLangs).toEqual(['en', 'ja', 'ko']);
-    expect(publicLangs).toEqual(['en', 'ja', 'ko']);
+  it('every option value round-trips through the parser', () => {
+    for (const option of buildTranslateSelectOptions('English')) {
+      expect(parseTranslateSelectValue(option.value)).not.toBeNull();
+    }
   });
 });
 
 describe('parseTranslateSelectValue', () => {
-  it('parses private choices', () => {
-    expect(parseTranslateSelectValue('private:ja')).toEqual({ visibility: 'private', lang: 'ja' });
+  it('parses private', () => {
+    expect(parseTranslateSelectValue('private')).toBe('private');
   });
 
-  it('parses public choices', () => {
-    expect(parseTranslateSelectValue('public:ko')).toEqual({ visibility: 'public', lang: 'ko' });
+  it('parses public', () => {
+    expect(parseTranslateSelectValue('public')).toBe('public');
   });
 
-  it('rejects unknown languages', () => {
-    expect(parseTranslateSelectValue('private:fr')).toBeNull();
-  });
-
-  it('rejects unknown visibility', () => {
-    expect(parseTranslateSelectValue('broadcast:en')).toBeNull();
-  });
-
-  it('rejects empty and malformed values', () => {
+  it('rejects unknown, empty, and legacy values', () => {
+    expect(parseTranslateSelectValue('broadcast')).toBeNull();
     expect(parseTranslateSelectValue('')).toBeNull();
-    expect(parseTranslateSelectValue('private')).toBeNull();
-    expect(parseTranslateSelectValue('private:ja:extra')).toBeNull();
+    expect(parseTranslateSelectValue('private:ja')).toBeNull();
   });
 });
 

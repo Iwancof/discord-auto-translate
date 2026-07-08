@@ -4,12 +4,7 @@ import {
   type SlashCommandStringOption
 } from 'discord.js';
 import { getUserLang, setUserLang, type UserLang } from '../db.js';
-
-const languageChoices = [
-  { name: 'English', value: 'en' },
-  { name: 'Japanese', value: 'ja' },
-  { name: 'Korean', value: 'ko' }
-] as const;
+import { formatLang, LANG_CHOICES } from '../langs.js';
 
 export const languageCommand = new SlashCommandBuilder()
   .setName('language')
@@ -23,7 +18,7 @@ export const languageCommand = new SlashCommandBuilder()
           .setName('lang')
           .setDescription('Preferred language')
           .setRequired(true)
-          .addChoices(...languageChoices)
+          .addChoices(...LANG_CHOICES)
       )
   )
   .addSubcommand((subcommand) =>
@@ -52,8 +47,4 @@ export async function executeLanguageCommand(
   });
 }
 
-const LANG_NAMES: Record<UserLang, string> = { en: 'English', ja: 'Japanese', ko: 'Korean' };
-
-export function formatLang(lang: UserLang): string {
-  return LANG_NAMES[lang];
-}
+export { formatLang } from '../langs.js';

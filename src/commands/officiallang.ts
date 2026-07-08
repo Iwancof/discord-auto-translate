@@ -11,19 +11,9 @@ import {
   resolveOfficialLang,
   type OfficialLangSetting
 } from '../db.js';
+import { LANG_CHOICES, LANG_NAMES } from '../langs.js';
 
-const langChoices = [
-  { name: 'Auto (detect from usage)', value: 'auto' },
-  { name: 'English', value: 'en' },
-  { name: 'Japanese', value: 'ja' },
-  { name: 'Korean', value: 'ko' }
-] as const;
-
-const LANG_NAMES: Record<string, string> = {
-  en: 'English',
-  ja: 'Japanese',
-  ko: 'Korean'
-};
+const langChoices = [{ name: 'Auto (detect from usage)', value: 'auto' }, ...LANG_CHOICES];
 
 export const officialLangCommand = new SlashCommandBuilder()
   .setName('officiallang')

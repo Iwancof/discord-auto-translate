@@ -2,7 +2,9 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-export type UserLang = 'en' | 'ja' | 'ko';
+export type UserLang = 'en' | 'ja' | 'ko' | 'ar' | 'fr' | 'vi';
+
+const LANG_LIST_SQL = "'en', 'ja', 'ko', 'ar', 'fr', 'vi'";
 
 let db: Database.Database | null = null;
 
@@ -27,21 +29,21 @@ function getDb(): Database.Database {
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='user_prefs'"
   ).get() as { sql: string } | undefined;
 
-  if (existing && !existing.sql.includes("'ko'")) {
-    db.exec('ALTER TABLE user_prefs RENAME TO _user_prefs_v1');
+  if (existing && !existing.sql.includes("'vi'")) {
+    db.exec('ALTER TABLE user_prefs RENAME TO _user_prefs_old');
     db.exec(`
       CREATE TABLE user_prefs (
         user_id TEXT PRIMARY KEY,
-        lang TEXT NOT NULL CHECK (lang IN ('en', 'ja', 'ko'))
+        lang TEXT NOT NULL CHECK (lang IN (${LANG_LIST_SQL}))
       )
     `);
-    db.exec('INSERT INTO user_prefs SELECT * FROM _user_prefs_v1');
-    db.exec('DROP TABLE _user_prefs_v1');
+    db.exec('INSERT INTO user_prefs SELECT * FROM _user_prefs_old');
+    db.exec('DROP TABLE _user_prefs_old');
   } else if (!existing) {
     db.exec(`
       CREATE TABLE user_prefs (
         user_id TEXT PRIMARY KEY,
-        lang TEXT NOT NULL CHECK (lang IN ('en', 'ja', 'ko'))
+        lang TEXT NOT NULL CHECK (lang IN (${LANG_LIST_SQL}))
       )
     `);
   }
@@ -50,25 +52,26 @@ function getDb(): Database.Database {
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='guild_settings'"
   ).get() as { sql: string } | undefined;
 
-  if (gsSchema && !gsSchema.sql.includes('official_lang')) {
-    db.exec('ALTER TABLE guild_settings RENAME TO _guild_settings_v1');
-    db.exec(`
-      CREATE TABLE guild_settings (
-        guild_id TEXT PRIMARY KEY,
-        mode TEXT NOT NULL CHECK (mode IN ('auto', 'button')),
-        official_lang TEXT NOT NULL DEFAULT 'auto' CHECK (official_lang IN ('auto', 'en', 'ja', 'ko'))
-      )
-    `);
-    db.exec("INSERT INTO guild_settings (guild_id, mode) SELECT guild_id, mode FROM _guild_settings_v1");
-    db.exec('DROP TABLE _guild_settings_v1');
+  const createGuildSettingsSql = `
+    CREATE TABLE guild_settings (
+      guild_id TEXT PRIMARY KEY,
+      mode TEXT NOT NULL CHECK (mode IN ('auto', 'button')),
+      official_lang TEXT NOT NULL DEFAULT 'auto' CHECK (official_lang IN ('auto', ${LANG_LIST_SQL}))
+    )
+  `;
+
+  if (gsSchema && (!gsSchema.sql.includes('official_lang') || !gsSchema.sql.includes("'vi'"))) {
+    const hadOfficialLang = gsSchema.sql.includes('official_lang');
+    db.exec('ALTER TABLE guild_settings RENAME TO _guild_settings_old');
+    db.exec(createGuildSettingsSql);
+    db.exec(
+      hadOfficialLang
+        ? 'INSERT INTO guild_settings (guild_id, mode, official_lang) SELECT guild_id, mode, official_lang FROM _guild_settings_old'
+        : 'INSERT INTO guild_settings (guild_id, mode) SELECT guild_id, mode FROM _guild_settings_old'
+    );
+    db.exec('DROP TABLE _guild_settings_old');
   } else if (!gsSchema) {
-    db.exec(`
-      CREATE TABLE guild_settings (
-        guild_id TEXT PRIMARY KEY,
-        mode TEXT NOT NULL CHECK (mode IN ('auto', 'button')),
-        official_lang TEXT NOT NULL DEFAULT 'auto' CHECK (official_lang IN ('auto', 'en', 'ja', 'ko'))
-      )
-    `);
+    db.exec(createGuildSettingsSql);
   }
 
   db.exec(`
@@ -110,7 +113,7 @@ function getDb(): Database.Database {
 }
 
 export type GuildMode = 'auto' | 'button';
-export type OfficialLangSetting = 'auto' | 'en' | 'ja' | 'ko';
+export type OfficialLangSetting = 'auto' | UserLang;
 
 export interface LangStat {
   lang: string;

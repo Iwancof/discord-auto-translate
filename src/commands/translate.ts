@@ -4,13 +4,8 @@ import {
   type SlashCommandStringOption
 } from 'discord.js';
 import { getGlossaryEntries, getUserLang, type UserLang } from '../db.js';
+import { LANG_CHOICES } from '../langs.js';
 import { translate } from '../translator.js';
-
-const langChoices = [
-  { name: 'English', value: 'en' },
-  { name: 'Japanese', value: 'ja' },
-  { name: 'Korean', value: 'ko' }
-] as const;
 
 export const translateCommand = new SlashCommandBuilder()
   .setName('translate')
@@ -21,7 +16,7 @@ export const translateCommand = new SlashCommandBuilder()
       .setName('to')
       .setDescription('Target language (default: your /language setting)')
       .setRequired(false)
-      .addChoices(...langChoices)
+      .addChoices(...LANG_CHOICES)
   );
 
 export async function executeTranslateCommand(

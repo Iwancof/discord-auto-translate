@@ -39,7 +39,8 @@ export function extractTranslatable(content: string): string | null {
   return replaced.length > 0 ? replaced : null;
 }
 
-export function isTrivial(text: string): boolean {
+// Pure acknowledgements/slang/emoji — never worth translating, alone or in a batch.
+export function isAcknowledgement(text: string): boolean {
   const normalized = normalizeForTrivial(text);
   if (!normalized) {
     return true;
@@ -49,39 +50,51 @@ export function isTrivial(text: string): boolean {
     return true;
   }
 
-  if (TRIVIAL_PATTERNS.some((pattern) => pattern.test(normalized))) {
+  return TRIVIAL_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function isTrivial(text: string): boolean {
+  if (isAcknowledgement(text)) {
     return true;
   }
 
+  const normalized = normalizeForTrivial(text);
   const compactLength = normalized.replace(/\s+/g, '').length;
   const wordCount = normalized.split(/\s+/).filter(Boolean).length;
   return compactLength < 8 && wordCount < 2;
 }
 
-export function shouldTranslate(msg: MessageLike): boolean {
+function passesContentGates(msg: MessageLike): string | null {
   if (msg.author?.bot || msg.webhookId) {
-    return false;
+    return null;
   }
 
   const content = msg.content ?? '';
   if (!content.trim() && (msg.attachments?.size ?? 0) > 0) {
-    return false;
+    return null;
   }
 
   if (content.length > 2000) {
-    return false;
+    return null;
   }
 
   if (codeBlockRatio(content) > 0.5) {
-    return false;
+    return null;
   }
 
-  const translatable = extractTranslatable(content);
-  if (!translatable) {
-    return false;
-  }
+  return extractTranslatable(content);
+}
 
-  return !isTrivial(translatable);
+export function shouldTranslate(msg: MessageLike): boolean {
+  const translatable = passesContentGates(msg);
+  return !!translatable && !isTrivial(translatable);
+}
+
+// Looser gate for the button batcher: short fragments are allowed (they may
+// combine into a meaningful block), only pure acknowledgements are excluded.
+export function shouldBatchForButton(msg: MessageLike): boolean {
+  const translatable = passesContentGates(msg);
+  return !!translatable && !isAcknowledgement(translatable);
 }
 
 function replaceCodeWithPlaceholder(text: string): string {

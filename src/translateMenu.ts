@@ -1,34 +1,21 @@
-import type { UserLang } from './db.js';
-
 export const TRANSLATE_SELECT_PREFIX = 'trsel:';
 
-export interface TranslateSelectChoice {
-  visibility: 'private' | 'public';
-  lang: UserLang;
-}
-
-const LANG_NAMES: Record<UserLang, string> = { en: 'English', ja: 'Japanese', ko: 'Korean' };
-const LANGS: readonly UserLang[] = ['en', 'ja', 'ko'];
+export type TranslateVisibility = 'private' | 'public';
 
 export interface TranslateSelectOption {
   label: string;
   value: string;
 }
 
-export function buildTranslateSelectOptions(): TranslateSelectOption[] {
-  const privateOptions = LANGS.map((lang) => ({
-    label: `\u{1F512} ${LANG_NAMES[lang]} — only you`,
-    value: `private:${lang}`
-  }));
-  const publicOptions = LANGS.map((lang) => ({
-    label: `\u{1F4E2} ${LANG_NAMES[lang]} — post to channel`,
-    value: `public:${lang}`
-  }));
-  return [...privateOptions, ...publicOptions];
+// The menu only picks where to show the translation; the target language is
+// always the invoker's /language setting (shown in the labels for clarity).
+export function buildTranslateSelectOptions(targetLangName: string): TranslateSelectOption[] {
+  return [
+    { label: `\u{1F512} ${targetLangName} — only you`, value: 'private' },
+    { label: `\u{1F4E2} ${targetLangName} — post to channel`, value: 'public' }
+  ];
 }
 
-export function parseTranslateSelectValue(value: string): TranslateSelectChoice | null {
-  const match = value.match(/^(private|public):(en|ja|ko)$/);
-  if (!match) return null;
-  return { visibility: match[1] as 'private' | 'public', lang: match[2] as UserLang };
+export function parseTranslateSelectValue(value: string): TranslateVisibility | null {
+  return value === 'private' || value === 'public' ? value : null;
 }

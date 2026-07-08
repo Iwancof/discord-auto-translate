@@ -55,7 +55,7 @@ describe('CHECK constraint', () => {
     const dbPath = process.env.BOT_DB_PATH!;
     const raw = new Database(dbPath);
     expect(() =>
-      raw.prepare("INSERT INTO user_prefs (user_id, lang) VALUES ('x', 'fr')").run()
+      raw.prepare("INSERT INTO user_prefs (user_id, lang) VALUES ('x', 'de')").run()
     ).toThrow();
     raw.close();
   });
@@ -150,6 +150,26 @@ describe('usage cost estimation', () => {
   });
 });
 
+describe('new languages (ar/fr/vi)', () => {
+  it('stores and retrieves ar, fr, vi', () => {
+    setUserLang('u-ar', 'ar');
+    setUserLang('u-fr', 'fr');
+    setUserLang('u-vi', 'vi');
+    expect(getUserLang('u-ar')).toBe('ar');
+    expect(getUserLang('u-fr')).toBe('fr');
+    expect(getUserLang('u-vi')).toBe('vi');
+  });
+
+  it('rejects unsupported languages at the DB level', () => {
+    getUserLang('seed');
+    const raw = new Database(process.env.BOT_DB_PATH!);
+    expect(() =>
+      raw.prepare("INSERT INTO user_prefs (user_id, lang) VALUES ('x', 'de')").run()
+    ).toThrow();
+    raw.close();
+  });
+});
+
 describe('migration from old schema', () => {
   it('migrates a table without ko in CHECK to the new schema', () => {
     const dbPath = process.env.BOT_DB_PATH!;
@@ -166,5 +186,22 @@ describe('migration from old schema', () => {
     expect(getUserLang('u1')).toBe('ja');
     setUserLang('u1', 'ko');
     expect(getUserLang('u1')).toBe('ko');
+  });
+
+  it('migrates a 3-language user_prefs table to the 6-language schema', () => {
+    const dbPath = process.env.BOT_DB_PATH!;
+    const raw = new Database(dbPath);
+    raw.exec(`
+      CREATE TABLE user_prefs (
+        user_id TEXT PRIMARY KEY,
+        lang TEXT NOT NULL CHECK (lang IN ('en', 'ja', 'ko'))
+      )
+    `);
+    raw.prepare("INSERT INTO user_prefs (user_id, lang) VALUES ('u1', 'ko')").run();
+    raw.close();
+
+    expect(getUserLang('u1')).toBe('ko');
+    setUserLang('u1', 'vi');
+    expect(getUserLang('u1')).toBe('vi');
   });
 });

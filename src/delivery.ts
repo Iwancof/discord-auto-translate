@@ -36,10 +36,13 @@ export class AutoReplyDelivery implements DeliveryStrategy {
   }
 }
 
-export async function postTranslateButton(originalMsg: Message): Promise<Message | undefined> {
+export async function postTranslateButton(
+  originalMsg: Message,
+  customId = `tr:${originalMsg.id}`
+): Promise<Message | undefined> {
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`tr:${originalMsg.id}`)
+      .setCustomId(customId)
       .setLabel('\u{1F310} Translate')
       .setStyle(ButtonStyle.Secondary)
   );

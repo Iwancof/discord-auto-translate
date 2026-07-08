@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { recordUsage, type GlossaryEntry, type UserLang } from './db.js';
+import { LANG_NAMES } from './langs.js';
 
 export interface ChatContextItem {
   authorName: string;
@@ -13,8 +14,6 @@ export interface TranslateOptions {
 
 const DEFAULT_MODEL = 'claude-haiku-4-5';
 const SKIP_TOKEN = 'SKIP';
-
-const LANG_NAMES: Record<UserLang, string> = { en: 'English', ja: 'Japanese', ko: 'Korean' };
 
 export function buildSystemPrompt(
   targetLang: UserLang,
